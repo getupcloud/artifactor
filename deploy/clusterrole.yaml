@@ -1,0 +1,22 @@
+# Least-privilege permissions required by the scanner:
+#   - pods: list/get/watch   -> discover which images run in the cluster
+#   - serviceaccounts: get   -> imagePullSecrets merged into pods by the SA
+#   - secrets: get           -> read the referenced imagePullSecrets
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-image-scanner
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "get", "watch"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+  # to resolve the ReplicaSet -> Deployment owner chain of pods
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["list", "get"]

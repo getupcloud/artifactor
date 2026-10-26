@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cluster Image Scanner</title>
+<style>
+:root {
+  --bg: #0f141a; --panel: #161d26; --panel2: #1c2530; --border: #2a3644;
+  --text: #dbe4ee; --muted: #8b98a8; --accent: #4f9cf9;
+  --critical: #e5484d; --high: #f76b15; --medium: #ffb224; --low: #f7d447;
+  --negligible: #6e7b8a; --unknown: #4a5560;
+  --ok: #46a758; --err: #e5484d; --run: #4f9cf9;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+header {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 10;
+}
+header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+header .spacer { flex: 1; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 3px 12px; font-size: 12px; color: var(--muted);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.scanned { background: var(--ok); }
+.dot.scanning { background: var(--run); animation: pulse 1.2s infinite; }
+.dot.error { background: var(--err); }
+.dot.queued { background: var(--muted); }
+@keyframes pulse { 50% { opacity: .3; } }
+button {
+  background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+  padding: 7px 16px; font-size: 13px; cursor: pointer; font-weight: 600;
+}
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.secondary { background: var(--panel2); border: 1px solid var(--border); color: var(--text); font-weight: 400; }
+.banner {
+  margin: 12px 18px 0; padding: 10px 14px; border-radius: 8px; font-size: 13px;
+  background: rgba(229,72,77,.12); border: 1px solid rgba(229,72,77,.4); color: #ffb3b5;
+  display: none; white-space: pre-wrap; word-break: break-word;
+}
+.banner.show { display: block; }
+.stats {
+  display: flex; gap: 10px; flex-wrap: wrap; padding: 12px 18px 0;
+}
+.stat {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 14px; min-width: 90px;
+}
+.stat .n { font-size: 20px; font-weight: 700; }
+.stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.stat.sev { cursor: pointer; user-select: none; border-color: transparent; }
+.stat.sev.off { opacity: .35; }
+.stat.sev .n.critical { color: var(--critical); }
+.stat.sev .n.high { color: var(--high); }
+.stat.sev .n.medium { color: var(--medium); }
+.stat.sev .n.low { color: var(--low); }
+.stat.sev .n.negligible { color: var(--negligible); }
+.stat.sev .n.unknown { color: var(--unknown); }
+.layout { display: flex; gap: 14px; padding: 14px 18px; align-items: flex-start; }
+.sidebar {
+  width: 300px; flex: 0 0 300px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden; position: sticky; top: 64px;
+}
+.sidebar .head {
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.sidebar input[type=search] {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 13px;
+}
+.imglist { max-height: calc(100vh - 220px); overflow-y: auto; }
+.imgrow {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+  cursor: pointer; border-bottom: 1px solid rgba(42,54,68,.5); font-size: 12.5px;
+  word-break: break-all;
+}
+.imgrow:hover { background: var(--panel2); }
+.imgrow.active { background: var(--panel2); box-shadow: inset 3px 0 0 var(--accent); }
+.imgrow .name { flex: 1; }
+.imgrow .count { color: var(--muted); font-size: 11px; }
+.imgrow .err { color: var(--err); }
+.content { flex: 1; min-width: 0; }
+.filters {
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 12px;
+}
+.filters label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.filters input[type=text], .filters input[type=search] {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 10px; font-size: 13px; width: 230px;
+}
+.filters .hint { font-size: 12px; color: var(--muted); }
+.tablewrap {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden;
+}
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid rgba(42,54,68,.5); vertical-align: top; }
+th { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); position: sticky; top: 0; background: var(--panel); }
+tr:hover td { background: var(--panel2); }
+tr.cve-row { cursor: pointer; }
+td.chev { width: 24px; color: var(--muted); text-align: center; user-select: none; }
+tr.expand-row td { background: var(--bg); padding: 14px 18px; }
+tr.expand-row:hover td { background: var(--bg); }
+.exp-body { max-width: 920px; }
+.exp-imgs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.exp-label { color: var(--muted); font-size: 12px; }
+.img-tag {
+  display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; max-width: 380px;
+}
+.img-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
+.img-meta { color: var(--muted); font-size: 10.5px; }
+.img-tag:hover { border-color: var(--accent); color: var(--accent); }
+.img-tag.current { border-color: var(--accent); color: var(--accent); }
+.copy-btn {
+  background: var(--panel2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 4px; padding: 1px 8px; font-size: 11px; cursor: pointer;
+}
+.copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+.exp-desc { color: var(--text); white-space: pre-wrap; }
+.exp-urls { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; word-break: break-all; }
+.badge {
+  display: inline-block; border-radius: 4px; padding: 1px 8px;
+  font-size: 11px; font-weight: 700; color: #0f141a;
+}
+.badge.critical { background: var(--critical); }
+.badge.high { background: var(--high); }
+.badge.medium { background: var(--medium); }
+.badge.low { background: var(--low); }
+.badge.negligible { background: var(--negligible); color: #dfe6ee; }
+.badge.unknown { background: var(--unknown); color: #dfe6ee; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+.pkgname { font-weight: 600; }
+.desc { color: var(--muted); max-width: 420px; }
+.fixed { color: var(--ok); }
+.empty { padding: 40px; text-align: center; color: var(--muted); }
+.count-note { padding: 10px 12px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Cluster Image Scanner</h1>
+  <span class="chip" id="mode-chip">…</span>
+  <span class="chip" id="db-chip">db: …</span>
+  <span class="chip" id="last-chip">last scan: never</span>
+  <span class="spacer"></span>
+  <button id="scan-btn" title="Scan every image in the cluster">Scan now</button>
+</header>
+
+<div class="banner" id="banner"></div>
+
+<div class="stats" id="stats">
+  <div class="stat"><div class="n" id="stat-images">0</div><div class="l">Images</div></div>
+  <div class="stat"><div class="n" id="stat-scanned">0</div><div class="l">Scanned</div></div>
+  <div class="stat"><div class="n" id="stat-errors">0</div><div class="l">Errors</div></div>
+  <div class="stat"><div class="n" id="stat-cves">0</div><div class="l">Total CVEs</div></div>
+  <div class="stat sev" data-sev="critical"><div class="n critical" id="stat-critical">0</div><div class="l">Critical</div></div>
+  <div class="stat sev" data-sev="high"><div class="n high" id="stat-high">0</div><div class="l">High</div></div>
+  <div class="stat sev" data-sev="medium"><div class="n medium" id="stat-medium">0</div><div class="l">Medium</div></div>
+  <div class="stat sev" data-sev="low"><div class="n low" id="stat-low">0</div><div class="l">Low</div></div>
+  <div class="stat sev" data-sev="negligible"><div class="n negligible" id="stat-negligible">0</div><div class="l">Negligible</div></div>
+</div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="head">
+      <input type="search" id="img-search" placeholder="Filter images…">
+    </div>
+    <div class="imglist" id="imglist"></div>
+  </aside>
+
+  <main class="content">
+    <div class="filters">
+      <label>Artifact (syft package)
+        <input type="search" id="artifact-filter" list="artifact-list" placeholder="e.g. openssl, libc…">
+        <datalist id="artifact-list"></datalist>
+      </label>
+      <label>CVE ID
+        <input type="text" id="cve-filter" placeholder="e.g. CVE-2024-…">
+      </label>
+      <button class="secondary" id="clear-btn">Clear filters</button>
+      <span class="hint" id="cve-count"></span>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th></th><th>CVE</th><th>Severity</th><th>Package</th><th>Version</th>
+            <th>Fixed in</th><th id="th-image">Image</th><th>Matcher</th>
+          </tr>
+        </thead>
+        <tbody id="cve-tbody"></tbody>
+      </table>
+      <div class="empty" id="empty-msg">Select an image or wait for scans to finish.</div>
+    </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const SEVS = ["critical", "high", "medium", "low", "negligible", "unknown"];
+
+const state = {
+  images: [],          // /api/images summaries
+  selected: "",        // "" = all images
+  sevFilter: new Set(),// empty set = no filtering
+  status: null,
+  imageSearch: "",
+};
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+async function api(path) {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(path + " -> HTTP " + res.status);
+  return res.json();
+}
+
+/* ---------- status / stats ---------- */
+
+async function refreshStatus() {
+  try {
+    state.status = await api("/api/status");
+    $("mode-chip").textContent = state.status.mode || "unknown";
+    const db = state.status.db || {};
+    $("db-chip").textContent = "db: " + (db.schemaVersion ? "v" + db.schemaVersion : "n/a")
+      + (db.built ? " (built " + db.built.slice(0, 10) + ")" : "")
+      + (db.error ? " — ERROR" : "");
+    $("last-chip").textContent = "last scan: " + (state.status.lastScanDone
+      ? new Date(state.status.lastScanDone).toLocaleString() : "never")
+      + (state.status.scanning ? " — scanning…" : "");
+    const banner = $("banner");
+    const problems = [];
+    if (state.status.k8sError) problems.push("Kubernetes: " + state.status.k8sError);
+    if (db.error) problems.push("Vulnerability DB: " + db.error);
+    if (problems.length) { banner.textContent = problems.join("\n"); banner.classList.add("show"); }
+    else banner.classList.remove("show");
+    $("scan-btn").disabled = state.status.scanning;
+  } catch (e) { /* server restarting */ }
+}
+
+async function refreshImages() {
+  state.images = await api("/api/images");
+  let scanned = 0, errors = 0, cves = 0;
+  const sev = Object.fromEntries(SEVS.map((s) => [s, 0]));
+  for (const img of state.images) {
+    if (img.status === "scanned") scanned++;
+    if (img.status === "error") errors++;
+    cves += img.cveCount || 0;
+    for (const s of SEVS) sev[s] += (img.severities || {})[s] || 0;
+  }
+  $("stat-images").textContent = state.images.length;
+  $("stat-scanned").textContent = scanned;
+  $("stat-errors").textContent = errors;
+  $("stat-cves").textContent = cves;
+  for (const s of SEVS) $("stat-" + s).textContent = sev[s];
+  renderImageList();
+}
+
+function renderImageList() {
+  const q = state.imageSearch.toLowerCase();
+  const list = $("imglist");
+  list.innerHTML = "";
+  const allRow = document.createElement("div");
+  allRow.className = "imgrow" + (state.selected === "" ? " active" : "");
+  allRow.innerHTML = '<span class="dot queued"></span><span class="name">All images</span><span class="count">' + state.images.length + "</span>";
+  allRow.onclick = () => { state.selected = ""; renderImageList(); loadCVEs(); loadArtifacts(); };
+  list.appendChild(allRow);
+  for (const img of state.images) {
+    if (q && !img.image.toLowerCase().includes(q)) continue;
+    const row = document.createElement("div");
+    row.className = "imgrow" + (state.selected === img.image ? " active" : "");
+    const dot = '<span class="dot ' + img.status + '"></span>';
+    const badge = img.status === "scanned"
+      ? '<span class="count">' + img.cveCount + " CVEs</span>"
+      : img.status === "error" ? '<span class="err">error</span>' : '<span class="count">…</span>';
+    row.innerHTML = dot + '<span class="name">' + esc(img.image) + "</span>" + badge;
+    row.onclick = () => { state.selected = img.image; renderImageList(); loadCVEs(); loadArtifacts(); };
+    list.appendChild(row);
+  }
+}
+
+/* ---------- CVE table ---------- */
+
+async function loadCVEs() {
+  const params = new URLSearchParams();
+  if (state.selected) params.set("image", state.selected);
+  const artifact = $("artifact-filter").value.trim();
+  if (artifact) params.set("artifact", artifact);
+  const cveId = $("cve-filter").value.trim();
+  if (cveId) params.set("id", cveId);
+  if (state.sevFilter.size) params.set("severity", [...state.sevFilter].join(","));
+
+  let rows;
+  try { rows = await api("/api/cves?" + params.toString()); }
+  catch { return; }
+
+  const tbody = $("cve-tbody");
+  tbody.innerHTML = "";
+  $("empty-msg").style.display = rows.length ? "none" : "block";
+  $("empty-msg").textContent = rows.length === 0 ? "No CVEs match the current filters." : "";
+  $("cve-count").textContent = rows.length + " CVE(s)";
+  $("th-image").style.display = state.selected ? "none" : "";
+
+  for (const c of rows) {
+    const tr = document.createElement("tr");
+    tr.className = "cve-row";
+    tr.onclick = () => toggleExpansion(tr, c);
+    const idCell = c.dataSource
+      ? '<a class="mono" href="' + esc(c.dataSource) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">' + esc(c.id) + "</a>"
+      : '<span class="mono">' + esc(c.id) + "</span>";
+    const fixed = (c.fixedIn || []).slice(0, 3).map(esc).join(", ");
+    tr.innerHTML =
+      '<td class="chev">▸</td>' +
+      "<td>" + idCell + "</td>" +
+      '<td><span class="badge ' + esc(c.severity) + '">' + esc(c.severity) + "</span></td>" +
+      '<td><span class="pkgname">' + esc(c.package) + '</span> <span class="desc">(' + esc(c.packageType) + ")</span></td>" +
+      '<td class="mono">' + esc(c.packageVersion) + "</td>" +
+      '<td class="fixed mono">' + (fixed || "—") + "</td>" +
+      (state.selected ? "" : '<td class="mono">' + esc(c.image) + "</td>") +
+      "<td>" + esc(c.matcher) + "</td>";
+    tbody.appendChild(tr);
+  }
+}
+
+// toggleExpansion shows, in a row inserted right below the clicked CVE row:
+// the list of images containing the CVE, the full description, and reference
+// URLs. Clicking an image tag selects that image in the sidebar.
+function toggleExpansion(tr, c) {
+  const existing = tr.nextElementSibling;
+  if (existing && existing.classList.contains("expand-row")) {
+    existing.remove();
+    tr.querySelector(".chev").textContent = "▸";
+    return;
+  }
+  const colspan = document.querySelectorAll("thead th").length;
+  const urls = (c.urls || []).filter((u) => u !== c.dataSource);
+  const images = c.images || [];
+  const er = document.createElement("tr");
+  er.className = "expand-row";
+  er.innerHTML = '<td colspan="' + colspan + '"></td>';
+  er.firstElementChild.innerHTML =
+    '<div class="exp-body">' +
+    '<div class="exp-imgs"><span class="exp-label">Images containing this CVE:</span>' +
+    '<button class="copy-btn" title="Copy the image list (with namespace/controller) to the clipboard">Copy</button>' +
+    images.map((ref) =>
+      '<span class="img-tag' + (ref.image === c.image ? " current" : "") + '" title="' + esc(ref.image) + '">' +
+      '<span class="img-name">' + esc(ref.image) + "</span>" +
+      (ref.namespace
+        ? '<span class="img-meta">' + esc(ref.namespace) + " · " + esc(ref.controller) + "</span>"
+        : "") +
+      "</span>"
+    ).join("") + "</div>" +
+    '<div class="exp-desc">' + esc(c.description || "No description available.") + "</div>" +
+    (urls.length
+      ? '<div class="exp-urls">' + urls.slice(0, 5).map((u) => '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u) + "</a>").join(" ") + "</div>"
+      : "") +
+    "</div>";
+  er.querySelectorAll(".img-tag").forEach((tag) => {
+    tag.onclick = (ev) => {
+      ev.stopPropagation();
+      state.selected = tag.querySelector(".img-name").textContent;
+      renderImageList();
+      loadCVEs();
+      loadArtifacts();
+    };
+  });
+  const copyBtn = er.querySelector(".copy-btn");
+  copyBtn.onclick = async (ev) => {
+    ev.stopPropagation();
+    // one line per workload instance: "namespace/controller — image"
+    const text = images.map((ref) =>
+      (ref.namespace ? ref.namespace + "/" + ref.controller + " — " : "") + ref.image
+    ).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      copyBtn.textContent = "Copied!";
+    } catch {
+      copyBtn.textContent = "Copy failed";
+    }
+    setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+  };
+  tr.insertAdjacentElement("afterend", er);
+  tr.querySelector(".chev").textContent = "▾";
+}
+
+/* ---------- artifact suggestions (syft package names) ---------- */
+
+async function loadArtifacts() {
+  try {
+    const params = new URLSearchParams();
+    if (state.selected) params.set("image", state.selected);
+    const q = $("artifact-filter").value.trim();
+    if (q) params.set("q", q);
+    const names = await api("/api/artifacts?" + params.toString());
+    const dl = $("artifact-list");
+    dl.innerHTML = "";
+    for (const n of names.slice(0, 300)) {
+      const opt = document.createElement("option");
+      opt.value = n;
+      dl.appendChild(opt);
+    }
+  } catch { /* ignore */ }
+}
+
+/* ---------- actions ---------- */
+
+$("scan-btn").onclick = async () => {
+  try { await fetch("/api/scan", { method: "POST" }); }
+  catch { /* server restarting */ }
+  refreshStatus();
+};
+
+$("img-search").oninput = () => { state.imageSearch = $("img-search").value; renderImageList(); };
+
+let debounce;
+$("artifact-filter").oninput = () => {
+  clearTimeout(debounce);
+  debounce = setTimeout(() => { loadCVEs(); loadArtifacts(); }, 250);
+};
+$("cve-filter").oninput = () => { clearTimeout(debounce); debounce = setTimeout(loadCVEs, 250); };
+
+for (const el of document.querySelectorAll(".stat.sev")) {
+  el.onclick = () => {
+    const sev = el.dataset.sev;
+    if (state.sevFilter.has(sev)) state.sevFilter.delete(sev);
+    else state.sevFilter.add(sev);
+    el.classList.toggle("off", state.sevFilter.has(sev));
+    loadCVEs();
+  };
+}
+
+$("clear-btn").onclick = () => {
+  $("artifact-filter").value = "";
+  $("cve-filter").value = "";
+  state.sevFilter.clear();
+  document.querySelectorAll(".stat.sev").forEach((el) => el.classList.remove("off"));
+  loadCVEs();
+  loadArtifacts();
+};
+
+/* ---------- polling ---------- */
+
+async function poll() {
+  await refreshStatus();
+  await refreshImages().catch(() => {});
+  loadCVEs().catch(() => {});
+  if (state.status && state.status.scanning) loadArtifacts().catch(() => {});
+}
+
+poll();
+loadArtifacts();
+setInterval(poll, 8000);
+</script>
+</body>
+</html>

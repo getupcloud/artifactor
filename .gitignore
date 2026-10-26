@@ -1,0 +1,3 @@
+bin/
+grype-db/
+*.tar.gz

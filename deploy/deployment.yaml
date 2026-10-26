@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-image-scanner
+  namespace: image-scanner
+  labels:
+    app: cluster-image-scanner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-image-scanner
+  template:
+    metadata:
+      labels:
+        app: cluster-image-scanner
+    spec:
+      serviceAccountName: cluster-image-scanner
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: scanner
+          image: cluster-image-scanner:dev # build with `make docker-build` and set your tag
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DB_DIR
+              value: /data/db
+            - name: SCAN_INTERVAL
+              value: 6h
+            - name: CONCURRENCY
+              value: "3"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data # writable dir for the grype vulnerability DB and scan temp files
+      volumes:
+        - name: data
+          emptyDir: {}

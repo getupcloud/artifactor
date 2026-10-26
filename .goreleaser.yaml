@@ -1,0 +1,51 @@
+# GoReleaser configuration: builds the artifactor binary for linux/amd64 and
+# linux/arm64 and assembles multi-arch container images pushed to ghcr.io.
+#
+# - `goreleaser release --clean`           (on git tags): images tagged
+#   :<version>, :<short-commit> and :latest
+# - `goreleaser release --clean --snapshot` (on main pushes): images tagged
+#   :main, :<short-commit> and :latest
+version: 2
+
+project_name: artifactor
+
+builds:
+  - id: artifactor
+    main: .
+    binary: artifactor
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+snapshot:
+  version_template: "main"
+
+dockers_v2:
+  - id: artifactor
+    ids:
+      - artifactor
+    dockerfile: Dockerfile
+    images:
+      - ghcr.io/getupcloud/artifactor
+    tags:
+      - "{{ .Version }}"
+      - "{{ .ShortCommit }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: artifactor
+    annotations:
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.source: "{{ .GitURL }}"

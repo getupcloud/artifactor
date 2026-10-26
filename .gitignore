@@ -1,4 +1,5 @@
 bin/
+dist/
 grype-db/
 scan.html
 export/

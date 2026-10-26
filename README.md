@@ -17,7 +17,7 @@ O diretorio `export` contem o relatorio estatico e auto-contido do scan completo
 Abaixo está a arvore de aquivos criadas com o scan apenas dos namespaces `flux-system` e `metallb-system`:
 
 ```
-$ ./bin/artifactor --namespace flux-system --namespace metallb-system --export export
+$ ./bin/artifactor --namespace flux-system,metallb-system --export export
 $ tree export/
 export/
 ├── grype
@@ -105,7 +105,7 @@ Dockerfile / Makefile       build da imagem e automação
 ```bash
 make build          # binário local
 make run            # dev local (usa ~/.kube/config ou KUBECONFIG)
-make docker-build   # imagem do container (syft+grype já embutidos no binário)
+make docker-build   # imagens multi-arch (linux/amd64 + arm64) via GoReleaser, sem push (snapshot)
 make deploy         # aplica os manifests (ns artifactor + RBAC + Deployment + Service)
 make port-forward   # kubectl port-forward svc/artifactor 8080:8080
 make logs           # logs do Pod
@@ -123,10 +123,11 @@ Depois do port-forward, abra **http://localhost:8080**.
   - `artifactor --export export/` — os três: `scan.html` + `sbom/` + `grype/`
   - ou `make export` (equivale ao `--export export/`)
 
+A imagem é construída e publicada pelo **GoReleaser** (`.goreleaser.yaml`): binário estático linux/amd64 + arm64 e manifest multi-arch no ghcr.io (o workflow do GitHub Actions roda a cada push no `main` e em tags `v*`). Localmente: `make docker-build` (snapshot, sem push) ou, para publicar, crie uma tag e rode `make docker-push` com login no registry.
+
 Para usar sua própria imagem, ajuste `deploy/deployment.yaml` ou:
 ```bash
-make docker-build docker-push REGISTRY=registry.exemplo.com IMAGE=artifactor:v1
-kubectl -n artifactor set image deployment/artifactor scanner=registry.exemplo.com/artifactor:v1
+kubectl -n artifactor set image deployment/artifactor scanner=ghcr.io/getupcloud/artifactor:0.0.1
 ```
 
 ## RBAC

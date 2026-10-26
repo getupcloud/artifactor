@@ -1,23 +1,14 @@
 # syntax=docker/dockerfile:1
 
-# ---- build stage: syft and grype are compiled INTO the binary as Go libraries ----
-FROM golang:1.27-alpine AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
-    -ldflags "-s -w -X main.version=${VERSION}" \
-    -o /out/artifactor .
-
-# ---- runtime stage: static binary + CA certs only (no syft/grype binaries) ----
+# Runtime image only: GoReleaser builds the static binary for each target
+# architecture and stages it as ./artifactor in the Docker build context
+# (see .goreleaser.yaml).
 FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata \
     && adduser -D -u 65532 -h /data scanner
 USER scanner
 WORKDIR /data
-COPY --from=build /out/artifactor /usr/local/bin/artifactor
+COPY artifactor /usr/local/bin/artifactor
 ENV DB_DIR=/data/db \
     PORT=8080
 EXPOSE 8080

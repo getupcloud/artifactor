@@ -35,11 +35,11 @@ run: ## Run locally against your kubeconfig (dev mode)
 export: ## Run a scan and export the full report (scan.html + sbom/ + grype/) to ./export/
 	rm -rf export && go run . --db-dir ./grype-db --export export
 
-docker-build: ## Build the container image
-	docker build --build-arg VERSION=$(VERSION) -t $(FULL_IMAGE) .
+docker-build: ## Build multi-arch container images locally (snapshot, no push; requires goreleaser + buildx)
+	goreleaser release --clean --snapshot
 
-docker-push: docker-build ## Build and push the container image
-	docker push $(FULL_IMAGE)
+docker-push: ## Build and push multi-arch container images with GoReleaser (requires a git tag + registry login)
+	goreleaser release --clean
 
 deploy: ## Apply the Kubernetes manifests (namespace, RBAC, deployment, service)
 	$(KUBECTL) apply -f deploy/namespace.yaml

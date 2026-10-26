@@ -12,7 +12,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -o /out/artifactor .
 
 # ---- runtime stage: static binary + CA certs only (no syft/grype binaries) ----
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata \
     && adduser -D -u 65532 -h /data scanner
 USER scanner

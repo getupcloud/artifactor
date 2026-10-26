@@ -172,21 +172,30 @@ func (s *Server) cveRows() []cveOut {
 	return out
 }
 
-// GET /api/cves?image=&artifact=&severity=&id=
-// severity accepts a comma-separated list; artifact is a case-insensitive
-// substring match against the syft artifact (package) name.
+// GET /api/cves?image=&artifact=&severity=&exclude=&id=
+// severity accepts a comma-separated include list; exclude accepts a
+// comma-separated list of severities to drop (used by the SPA's severity
+// chips, which start all "on" and turn individual severities off). artifact
+// is a case-insensitive substring match against the syft artifact (package)
+// name.
 func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	image := q.Get("image")
-	severityCSV := q.Get("severity")
 	idFilter := strings.ToLower(strings.TrimSpace(q.Get("id")))
 	artifactFilter := scanner.PackageNameFilter(q.Get("artifact"))
 
 	severities := map[string]struct{}{}
-	for _, sev := range strings.Split(severityCSV, ",") {
+	for _, sev := range strings.Split(q.Get("severity"), ",") {
 		sev = strings.ToLower(strings.TrimSpace(sev))
 		if sev != "" {
 			severities[sev] = struct{}{}
+		}
+	}
+	excluded := map[string]struct{}{}
+	for _, sev := range strings.Split(q.Get("exclude"), ",") {
+		sev = strings.ToLower(strings.TrimSpace(sev))
+		if sev != "" {
+			excluded[sev] = struct{}{}
 		}
 	}
 
@@ -199,6 +208,9 @@ func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 			if _, ok := severities[row.Severity]; !ok {
 				continue
 			}
+		}
+		if _, skip := excluded[row.Severity]; skip {
+			continue
 		}
 		if !artifactFilter(row.PackageName) {
 			continue

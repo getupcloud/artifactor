@@ -234,11 +234,13 @@ function snapshotFilterCVEs(params) {
   const artifact = (params.get("artifact") || "").toLowerCase();
   const id = (params.get("id") || "").toLowerCase();
   const sevs = (params.get("severity") || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const excluded = (params.get("exclude") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const rows = (SNAPSHOT.cves || []).filter((c) =>
     (!image || c.image === image) &&
     (!artifact || (c.package || "").toLowerCase().includes(artifact)) &&
     (!id || (c.id || "").toLowerCase().includes(id)) &&
-    (!sevs.length || sevs.includes(c.severity))
+    (!sevs.length || sevs.includes(c.severity)) &&
+    (!excluded.length || !excluded.includes(c.severity))
   );
   const rank = Object.fromEntries(SEVS.map((s, i) => [s, i]));
   rows.sort((a, b) =>
@@ -273,7 +275,7 @@ function snapshotAPI(path) {
 const state = {
   images: [],          // /api/images summaries
   selected: "",        // "" = all images
-  sevFilter: new Set(),// empty set = no filtering
+  sevFilter: new Set(),// severities turned OFF (chips start all "on")
   status: null,
   imageSearch: "",
   lastQuery: null,     // /api/cves query string of the last render
@@ -364,7 +366,8 @@ async function loadCVEs() {
   if (artifact) params.set("artifact", artifact);
   const cveId = $("cve-filter").value.trim();
   if (cveId) params.set("id", cveId);
-  if (state.sevFilter.size) params.set("severity", [...state.sevFilter].join(","));
+  // chips start all "on"; clicking one turns that severity OFF (excluded)
+  if (state.sevFilter.size) params.set("exclude", [...state.sevFilter].join(","));
 
   let rows;
   const query = params.toString();

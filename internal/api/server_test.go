@@ -111,6 +111,30 @@ func TestCVEArtifactFilter(t *testing.T) {
 	}
 }
 
+func TestCVESeverityExclude(t *testing.T) {
+	srv, _ := testServer(t)
+	// chips start all "on": excluding critical removes only critical rows
+	rows := getJSON(t, srv.Handler(), "/api/cves?exclude=critical")
+	if len(rows) != 3 { // 4 total minus CVE-2024-0001
+		t.Fatalf("exclude=critical rows = %d, want 3", len(rows))
+	}
+	for _, r := range rows {
+		if r["severity"] == "critical" {
+			t.Errorf("critical row leaked: %v", r)
+		}
+	}
+	// excluding several severities drops all matching rows
+	rows = getJSON(t, srv.Handler(), "/api/cves?exclude=critical,high,medium")
+	if len(rows) != 0 {
+		t.Fatalf("exclude=critical,high,medium rows = %d, want 0", len(rows))
+	}
+	// include list still works alongside
+	rows = getJSON(t, srv.Handler(), "/api/cves?severity=medium&exclude=medium")
+	if len(rows) != 0 {
+		t.Fatalf("severity=medium&exclude=medium rows = %d, want 0", len(rows))
+	}
+}
+
 func TestCVESeverityAndImageFilter(t *testing.T) {
 	srv, _ := testServer(t)
 	rows := getJSON(t, srv.Handler(), "/api/cves?severity=critical,high")

@@ -49,6 +49,7 @@ button.secondary { background: var(--panel2); border: 1px solid var(--border); c
   display: none; white-space: pre-wrap; word-break: break-word;
 }
 .banner.show { display: block; }
+.banner.info { background: rgba(79,156,249,.12); border-color: rgba(79,156,249,.4); color: #a8cfff; }
 .stats {
   display: flex; gap: 10px; flex-wrap: wrap; padding: 12px 18px 0;
 }
@@ -160,6 +161,7 @@ tr.expand-row:hover td { background: var(--bg); }
   <span class="chip" id="db-chip">db: …</span>
   <span class="chip" id="last-chip">last scan: never</span>
   <span class="spacer"></span>
+  <button class="secondary" id="export-btn" title="Download this report as a single self-contained HTML file">Export</button>
   <button id="scan-btn" title="Scan every image in the cluster">Scan now</button>
 </header>
 
@@ -212,10 +214,61 @@ tr.expand-row:hover td { background: var(--bg); }
   </main>
 </div>
 
+<!-- EXPORT_DATA -->
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
 const SEVS = ["critical", "high", "medium", "low", "negligible", "unknown"];
+
+// Self-contained export mode: the server (or --export) replaces the marker
+// above with a <script id="__artifactor_data" type="application/json"> block
+// containing a frozen snapshot of the results. When present, all API calls
+// are answered from this snapshot, so the report works without the server.
+const SNAPSHOT = (() => {
+  const el = document.getElementById("__artifactor_data");
+  return el ? JSON.parse(el.textContent) : null;
+})();
+
+function snapshotFilterCVEs(params) {
+  const image = params.get("image") || "";
+  const artifact = (params.get("artifact") || "").toLowerCase();
+  const id = (params.get("id") || "").toLowerCase();
+  const sevs = (params.get("severity") || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const rows = (SNAPSHOT.cves || []).filter((c) =>
+    (!image || c.image === image) &&
+    (!artifact || (c.package || "").toLowerCase().includes(artifact)) &&
+    (!id || (c.id || "").toLowerCase().includes(id)) &&
+    (!sevs.length || sevs.includes(c.severity))
+  );
+  const rank = Object.fromEntries(SEVS.map((s, i) => [s, i]));
+  rows.sort((a, b) =>
+    rank[a.severity] - rank[b.severity] ||
+    (a.package || "").localeCompare(b.package || "") ||
+    (a.id || "").localeCompare(b.id || ""));
+  return rows;
+}
+
+function snapshotAPI(path) {
+  const url = new URL(path, "http://localhost");
+  switch (url.pathname) {
+    case "/api/status":
+      return Promise.resolve(SNAPSHOT.status || {});
+    case "/api/images":
+      return Promise.resolve(SNAPSHOT.images || []);
+    case "/api/cves":
+      return Promise.resolve(snapshotFilterCVEs(url.searchParams));
+    case "/api/artifacts": {
+      const image = url.searchParams.get("image") || "";
+      const q = (url.searchParams.get("q") || "").toLowerCase();
+      const names = image && SNAPSHOT.artifactsByImage && SNAPSHOT.artifactsByImage[image]
+        ? SNAPSHOT.artifactsByImage[image]
+        : (SNAPSHOT.artifacts || []);
+      return Promise.resolve(names.filter((n) => !q || n.toLowerCase().includes(q)));
+    }
+    default:
+      return Promise.reject(new Error("not available in exported snapshot: " + path));
+  }
+}
 
 const state = {
   images: [],          // /api/images summaries
@@ -230,6 +283,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 async function api(path) {
+  if (SNAPSHOT) return snapshotAPI(path);
   const res = await fetch(path);
   if (!res.ok) throw new Error(path + " -> HTTP " + res.status);
   return res.json();
@@ -249,11 +303,13 @@ async function refreshStatus() {
       ? new Date(state.status.lastScanDone).toLocaleString() : "never")
       + (state.status.scanning ? " — scanning…" : "");
     const banner = $("banner");
-    const problems = [];
-    if (state.status.k8sError) problems.push("Kubernetes: " + state.status.k8sError);
-    if (db.error) problems.push("Vulnerability DB: " + db.error);
-    if (problems.length) { banner.textContent = problems.join("\n"); banner.classList.add("show"); }
-    else banner.classList.remove("show");
+    if (!SNAPSHOT) {
+      const problems = [];
+      if (state.status.k8sError) problems.push("Kubernetes: " + state.status.k8sError);
+      if (db.error) problems.push("Vulnerability DB: " + db.error);
+      if (problems.length) { banner.textContent = problems.join("\n"); banner.classList.add("show"); }
+      else banner.classList.remove("show");
+    }
     $("scan-btn").disabled = state.status.scanning;
   } catch (e) { /* server restarting */ }
 }
@@ -482,6 +538,8 @@ $("scan-btn").onclick = async () => {
   refreshStatus();
 };
 
+$("export-btn").onclick = () => { window.location.href = "/api/export"; };
+
 $("img-search").oninput = () => { state.imageSearch = $("img-search").value; renderImageList(); };
 
 let debounce;
@@ -519,9 +577,20 @@ async function poll() {
   if (state.status && state.status.scanning) loadArtifacts().catch(() => {});
 }
 
+if (SNAPSHOT) {
+  // frozen export: no live actions, no polling
+  $("scan-btn").style.display = "none";
+  $("export-btn").style.display = "none";
+  const banner = $("banner");
+  banner.textContent = "Snapshot report exported at " +
+    new Date(SNAPSHOT.generatedAt).toLocaleString() +
+    " — data is frozen; all filters work offline.";
+  banner.classList.add("show", "info");
+}
+
 poll();
 loadArtifacts();
-setInterval(poll, 8000);
+if (!SNAPSHOT) setInterval(poll, 8000);
 </script>
 </body>
 </html>

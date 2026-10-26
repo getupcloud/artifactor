@@ -41,6 +41,7 @@ func main() {
 		dbUpdate    = flag.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")
 		platform    = flag.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
 		scanTimeout = flag.Duration("scan-timeout", envDuration("SCAN_TIMEOUT", 15*time.Minute), "per-image scan timeout")
+		exportFile  = flag.String("export", envStr("EXPORT", ""), "run a scan, export the report as a single self-contained HTML file to this path, and exit")
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -54,6 +55,13 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if *exportFile != "" {
+		if err := runExport(ctx, *exportFile, *dbDir, *dbUpdate, *namespace, *platform, *scanTimeout, *concurrency); err != nil {
+			log.Fatalf("export: %v", err)
+		}
+		return
+	}
 
 	// 1. Kubernetes client: in-cluster (kubernetes.default.svc) or kubeconfig.
 	k8sClient, mode, k8sErr := k8s.New()
@@ -177,6 +185,55 @@ func main() {
 			runScan()
 		}
 	}
+}
+
+// runExport implements --export: prepare the DB, scan every image once, and
+// write the self-contained HTML report, then exit.
+func runExport(ctx context.Context, path, dbDir string, dbUpdate bool, namespace, platform string, scanTimeout time.Duration, concurrency int) error {
+	k8sClient, mode, k8sErr := k8s.New()
+	if k8sErr != nil {
+		return fmt.Errorf("no cluster access: %w", k8sErr)
+	}
+	log.Printf("kubernetes client ready (mode: %s)", mode)
+
+	log.Printf("preparing grype vulnerability database at %s ...", dbDir)
+	provider, dbStatus, dbErr := scanner.NewProvider(dbDir, version, dbUpdate)
+	if dbErr != nil {
+		log.Printf("WARNING: vulnerability database: %v (images will be scanned but CVE matching will fail)", dbErr)
+	}
+
+	store := scanner.NewStore()
+	if dbStatus.Error != "" {
+		store.SetDBError(dbStatus.Error)
+	}
+	sc := scanner.New(scanner.Options{
+		Client:      k8sClient,
+		Namespace:   namespace,
+		Provider:    provider,
+		Platform:    platform,
+		Timeout:     scanTimeout,
+		Concurrency: concurrency,
+		Store:       store,
+		Logger:      log.Default(),
+	})
+
+	log.Print("scanning all cluster images ...")
+	if err := sc.RunOnce(ctx); err != nil && err != context.Canceled {
+		return err
+	}
+
+	server := api.New(api.Options{
+		Store:  store,
+		SPA:    spaHTML,
+		Mode:   mode,
+		K8sErr: k8sErr,
+		DB:     func() scanner.DBStatus { return dbStatus },
+	})
+	if err := os.WriteFile(path, server.ExportHTML(), 0o644); err != nil {
+		return err
+	}
+	log.Printf("report exported to %s", path)
+	return nil
 }
 
 func defaultDBDir() string {

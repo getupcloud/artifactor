@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +49,7 @@ func testServer(t *testing.T) (*Server, *scanner.Store) {
 
 	srv := New(Options{
 		Store: store,
+		SPA:   []byte("<!-- EXPORT_DATA -->"),
 		Mode:  "test",
 		DB:    func() scanner.DBStatus { return scanner.DBStatus{Dir: "/tmp/db", SchemaVersion: "6.1.10"} },
 	})
@@ -185,6 +187,49 @@ func TestArtifactsEndpoint(t *testing.T) {
 	names = getJSONStrings(t, srv.Handler(), "/api/artifacts?q=ssl")
 	if len(names) != 1 || names[0] != "libssl3" {
 		t.Fatalf("q=ssl artifacts = %v", names)
+	}
+}
+
+func TestExportEndpoint(t *testing.T) {
+	srv, _ := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/export", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export -> %d: %s", rec.Code, rec.Body.String())
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<!-- EXPORT_DATA -->") {
+		t.Error("export marker was not replaced")
+	}
+	const prefix = `<script id="__artifactor_data" type="application/json">`
+	i := strings.Index(body, prefix)
+	if i < 0 {
+		t.Fatal("exported HTML missing embedded snapshot script")
+	}
+	j := strings.Index(body[i:], "</script>")
+	if j < 0 {
+		t.Fatal("snapshot script not closed")
+	}
+	var snap struct {
+		GeneratedAt string           `json:"generatedAt"`
+		Images      []map[string]any `json:"images"`
+		Cves        []map[string]any `json:"cves"`
+	}
+	if err := json.Unmarshal([]byte(body[i+len(prefix):i+j]), &snap); err != nil {
+		t.Fatalf("snapshot JSON invalid: %v", err)
+	}
+	if len(snap.Images) != 3 {
+		t.Errorf("snapshot images = %d, want 3", len(snap.Images))
+	}
+	if len(snap.Cves) != 4 { // 2 in nginx + 2 in busybox
+		t.Errorf("snapshot cves = %d, want 4", len(snap.Cves))
+	}
+	if snap.GeneratedAt == "" {
+		t.Error("snapshot missing generatedAt")
 	}
 }
 

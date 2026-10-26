@@ -36,6 +36,7 @@ Dockerfile / Makefile       build da imagem e automação
 | GET | `/api/cves?image=&artifact=&severity=&id=` | CVEs filtrados (artifact = substring do nome do pacote syft) |
 | GET | `/api/artifacts?image=&q=` | nomes distintos de artefatos (pacotes) encontrados pelo syft |
 | POST | `/api/scan` | dispara um rescan de todas as imagens |
+| GET | `/api/export` | baixa o relatório como um **único HTML auto-contido** (dados embutidos; funciona offline) |
 | GET | `/healthz` | liveness/readiness |
 
 ## Variáveis / flags
@@ -50,6 +51,7 @@ Dockerfile / Makefile       build da imagem e automação
 | `--db-auto-update` | `DB_AUTO_UPDATE` | `true` | baixa/atualiza o banco grype na inicialização |
 | `--platform` | `PLATFORM` | `linux/<GOARCH>` | plataforma da imagem a escanear |
 | `--scan-timeout` | `SCAN_TIMEOUT` | `15m` | timeout por imagem |
+| `--export <arquivo>` | `EXPORT` | — | escaneia uma vez, exporta o relatório em um único HTML auto-contido e sai |
 
 ## Construir e rodar
 
@@ -63,6 +65,11 @@ make logs           # logs do Pod
 ```
 
 Depois do port-forward, abra **http://localhost:8080**.
+
+### Exportar o relatório
+
+- **Pela UI**: o botão **Export** no cabeçalho baixa o relatório como um único HTML auto-contido (snapshot dos dados embutido — os filtros funcionam offline, sem o servidor).
+- **Pela CLI**: `artifactor --export report.html` executa um scan completo e grava o mesmo HTML no arquivo indicado.
 
 Para usar sua própria imagem, ajuste `deploy/deployment.yaml` ou:
 ```bash

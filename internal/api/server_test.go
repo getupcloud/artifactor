@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +34,7 @@ func testServer(t *testing.T) (*Server, *scanner.Store) {
 			{ID: "CVE-2024-0001", Severity: "critical", PackageName: "libssl3", PackageVersion: "3.0.11", PackageType: "deb", FixedIn: []string{"3.0.13"}, Description: "openssl bug"},
 			{ID: "CVE-2024-0002", Severity: "medium", PackageName: "nginx", PackageVersion: "1.25.3", PackageType: "deb"},
 		},
+		SBOM: []byte(`{"artifacts":[{"name":"nginx"}]}`),
 	})
 	store.Put(scanner.Result{
 		Image: "ghcr.io/org/app:v1", Status: scanner.StatusError, Error: "registry unreachable",
@@ -272,6 +275,113 @@ func TestExportEndpoint(t *testing.T) {
 	}
 	if snap.GeneratedAt == "" {
 		t.Error("snapshot missing generatedAt")
+	}
+}
+
+func TestExportSBOMsAndGrype(t *testing.T) {
+	srv, _ := testServer(t)
+
+	dir := t.TempDir()
+	n, err := srv.ExportSBOMs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 { // only nginx carries SBOM bytes in the fixture
+		t.Fatalf("sbom files = %d, want 1", n)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "nginx_1.25.sbom.json"))
+	if err != nil {
+		t.Fatalf("read sbom file: %v (dir contents: %v)", err, mustGlob(t, dir))
+	}
+	if string(data) != `{"artifacts":[{"name":"nginx"}]}` {
+		t.Errorf("sbom content = %s", data)
+	}
+
+	gdir := t.TempDir()
+	n, err = srv.ExportGrype(gdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 { // nginx + busybox are scanned
+		t.Fatalf("grype files = %d, want 2", n)
+	}
+	data, err = os.ReadFile(filepath.Join(gdir, "nginx_1.25.grype.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Matches []struct {
+			Vulnerability struct {
+				ID       string `json:"id"`
+				Severity string `json:"severity"`
+				Fix      struct {
+					Versions []string `json:"versions"`
+					State    string   `json:"state"`
+				} `json:"fix"`
+			} `json:"vulnerability"`
+			Artifact struct {
+				Name    string `json:"name"`
+				Version string `json:"version"`
+			} `json:"artifact"`
+		} `json:"matches"`
+		Distro struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"distro"`
+		Source struct {
+			Type   string `json:"type"`
+			Target string `json:"target"`
+		} `json:"source"`
+	}
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("grype report JSON: %v", err)
+	}
+	if len(report.Matches) != 2 {
+		t.Fatalf("grype matches = %d, want 2", len(report.Matches))
+	}
+	first := report.Matches[0]
+	if first.Vulnerability.ID != "CVE-2024-0001" || first.Vulnerability.Fix.State != "fixed" ||
+		len(first.Vulnerability.Fix.Versions) != 1 || first.Vulnerability.Fix.Versions[0] != "3.0.13" {
+		t.Errorf("first match = %+v", first)
+	}
+	if report.Source.Type != "image" || report.Source.Target != "nginx:1.25" {
+		t.Errorf("source = %+v", report.Source)
+	}
+	if report.Distro.Name != "debian" {
+		t.Errorf("distro = %+v", report.Distro)
+	}
+}
+
+func mustGlob(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+func TestExportAll(t *testing.T) {
+	srv, _ := testServer(t)
+	dir := t.TempDir()
+	htmlPath, sbomCount, grypeCount, err := srv.ExportAll(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if htmlPath != filepath.Join(dir, "scan.html") {
+		t.Errorf("html path = %s", htmlPath)
+	}
+	if sbomCount != 1 || grypeCount != 2 {
+		t.Errorf("counts = sbom %d grype %d, want 1/2", sbomCount, grypeCount)
+	}
+	for _, rel := range []string{"scan.html", "sbom", "grype"} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Errorf("missing %s in export dir: %v", rel, err)
+		}
 	}
 }
 

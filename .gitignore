@@ -1,4 +1,5 @@
 bin/
 grype-db/
 scan.html
+export/
 *.tar.gz

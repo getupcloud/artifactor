@@ -4,6 +4,7 @@ package scanner
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -38,9 +39,12 @@ func TestScanAlpineIntegration(t *testing.T) {
 		t.Fatalf("scan status = %s: %s", result.Status, result.Error)
 	}
 	t.Logf("distro: %s", result.Distro)
-	t.Logf("artifacts: %d, cves: %d", len(result.Artifacts), len(result.Cves))
+	t.Logf("artifacts: %d, cves: %d, sbom bytes: %d", len(result.Artifacts), len(result.Cves), len(result.SBOM))
 	if len(result.Artifacts) == 0 {
 		t.Fatal("no artifacts found — syft pipeline broken")
+	}
+	if len(result.SBOM) == 0 || !json.Valid(result.SBOM) {
+		t.Fatal("syft SBOM was not encoded to valid JSON")
 	}
 	for _, c := range result.Cves {
 		if len(c.ID) == 0 || len(c.PackageName) == 0 {

@@ -5,6 +5,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -23,6 +24,8 @@ import (
 	"github.com/anchore/grype/grype/vulnerability"
 	"github.com/anchore/stereoscope/pkg/image"
 	"github.com/anchore/syft/syft"
+	"github.com/anchore/syft/syft/format"
+	"github.com/anchore/syft/syft/sbom"
 
 	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/registryauth"
@@ -75,6 +78,7 @@ type Result struct {
 	ArtifactCount int            `json:"artifactCount"`
 	CVECount      int            `json:"cveCount"`
 	Severities    map[string]int `json:"severities"`
+	SBOM          []byte         `json:"-"` // syft JSON SBOM of the image (used by --export-sbom)
 }
 
 // Summary is the API-facing projection of a Result.
@@ -194,6 +198,7 @@ func (s *Store) Snapshot(image string) []Result {
 			cp.Artifacts = append([]Artifact(nil), r.Artifacts...)
 			cp.Cves = append([]CVE(nil), r.Cves...)
 			cp.Instances = append([]k8s.Instance(nil), r.Instances...)
+			cp.SBOM = append([]byte(nil), r.SBOM...)
 			out = append(out, cp)
 		}
 	}
@@ -396,6 +401,11 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 	if pkgContext.Distro != nil {
 		result.Distro = pkgContext.Distro.String()
 	}
+	if encoded, err := encodeSyftJSON(*sbo); err == nil {
+		result.SBOM = encoded
+	} else {
+		s.logger.Printf("warning: cannot encode syft SBOM for %s: %v", imageRef, err)
+	}
 
 	for _, p := range sbo.Artifacts.Packages.Sorted() {
 		result.Artifacts = append(result.Artifacts, Artifact{
@@ -458,6 +468,17 @@ func matcherTypes(types []match.MatcherType) string {
 		names = append(names, string(t))
 	}
 	return strings.Join(names, ",")
+}
+
+// encodeSyftJSON encodes an SBOM in syft's own JSON format (the same output
+// `syft <image> -o syft-json` produces).
+func encodeSyftJSON(s sbom.SBOM) ([]byte, error) {
+	for _, enc := range format.Encoders() {
+		if enc.ID() == "syft-json" {
+			return format.Encode(s, enc)
+		}
+	}
+	return nil, errors.New("syft-json format encoder not found")
 }
 
 func normalizeSeverity(severity string) string {

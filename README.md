@@ -51,7 +51,10 @@ Dockerfile / Makefile       build da imagem e automação
 | `--db-auto-update` | `DB_AUTO_UPDATE` | `true` | baixa/atualiza o banco grype na inicialização |
 | `--platform` | `PLATFORM` | `linux/<GOARCH>` | plataforma da imagem a escanear |
 | `--scan-timeout` | `SCAN_TIMEOUT` | `15m` | timeout por imagem |
-| `--export <arquivo>` | `EXPORT` | — | escaneia uma vez, exporta o relatório em um único HTML auto-contido e sai |
+| `--export-html <arquivo>` | `EXPORT_HTML` | — | escaneia uma vez, exporta o relatório em um único HTML auto-contido e sai |
+| `--export-sbom <dir>` | `EXPORT_SBOM` | — | escaneia uma vez, exporta um SBOM syft (syft-json) por imagem no diretório e sai |
+| `--export-grype <dir>` | `EXPORT_GRYPE` | — | escaneia uma vez, exporta um relatório grype (JSON) por imagem no diretório e sai |
+| `--export <dir>` | `EXPORT` | — | escaneia uma vez, exporta o relatório completo (`scan.html` + `sbom/` + `grype/`) no diretório e sai |
 
 ## Construir e rodar
 
@@ -69,7 +72,12 @@ Depois do port-forward, abra **http://localhost:8080**.
 ### Exportar o relatório
 
 - **Pela UI**: o botão **Export** no cabeçalho baixa o relatório como um único HTML auto-contido (snapshot dos dados embutido — os filtros funcionam offline, sem o servidor).
-- **Pela CLI**: `artifactor --export report.html` executa um scan completo e grava o mesmo HTML no arquivo indicado.
+- **Pela CLI** (escaneia uma vez e sai):
+  - `artifactor --export-html report.html` — só o HTML auto-contido
+  - `artifactor --export-sbom sboms/` — um SBOM syft (`syft-json`) por imagem
+  - `artifactor --export-grype grype/` — um relatório grype (JSON) por imagem
+  - `artifactor --export export/` — os três: `scan.html` + `sbom/` + `grype/`
+  - ou `make export` (equivale ao `--export export/`)
 
 Para usar sua própria imagem, ajuste `deploy/deployment.yaml` ou:
 ```bash

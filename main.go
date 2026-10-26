@@ -41,7 +41,10 @@ func main() {
 		dbUpdate    = flag.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")
 		platform    = flag.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
 		scanTimeout = flag.Duration("scan-timeout", envDuration("SCAN_TIMEOUT", 15*time.Minute), "per-image scan timeout")
-		exportFile  = flag.String("export", envStr("EXPORT", ""), "run a scan, export the report as a single self-contained HTML file to this path, and exit")
+		exportHTML  = flag.String("export-html", envStr("EXPORT_HTML", ""), "run a scan, export the report as a single self-contained HTML file to this path, and exit")
+		exportSBOM  = flag.String("export-sbom", envStr("EXPORT_SBOM", ""), "run a scan, export one syft SBOM (syft-json) per image into this directory, and exit")
+		exportGrype = flag.String("export-grype", envStr("EXPORT_GRYPE", ""), "run a scan, export one grype JSON report per image into this directory, and exit")
+		exportAll   = flag.String("export", envStr("EXPORT", ""), "run a scan, export the full report (scan.html + sbom/ + grype/) into this directory, and exit")
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -56,8 +59,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if *exportFile != "" {
-		if err := runExport(ctx, *exportFile, *dbDir, *dbUpdate, *namespace, *platform, *scanTimeout, *concurrency); err != nil {
+	if *exportHTML != "" || *exportSBOM != "" || *exportGrype != "" || *exportAll != "" {
+		err := runExport(ctx, exportRequest{
+			htmlPath: *exportHTML,
+			sbomDir:  *exportSBOM,
+			grypeDir: *exportGrype,
+			allDir:   *exportAll,
+		}, *dbDir, *dbUpdate, *namespace, *platform, *scanTimeout, *concurrency)
+		if err != nil {
 			log.Fatalf("export: %v", err)
 		}
 		return
@@ -187,9 +196,17 @@ func main() {
 	}
 }
 
-// runExport implements --export: prepare the DB, scan every image once, and
-// write the self-contained HTML report, then exit.
-func runExport(ctx context.Context, path, dbDir string, dbUpdate bool, namespace, platform string, scanTimeout time.Duration, concurrency int) error {
+// exportRequest holds the destinations of the --export* one-shot flags.
+type exportRequest struct {
+	htmlPath string // --export-html: single self-contained HTML file
+	sbomDir  string // --export-sbom: directory for per-image syft SBOMs
+	grypeDir string // --export-grype: directory for per-image grype JSON reports
+	allDir   string // --export: directory with scan.html + sbom/ + grype/
+}
+
+// runExport implements the --export* flags: prepare the DB, scan every image
+// once, write the requested artifacts, and exit.
+func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, namespace, platform string, scanTimeout time.Duration, concurrency int) error {
 	k8sClient, mode, k8sErr := k8s.New()
 	if k8sErr != nil {
 		return fmt.Errorf("no cluster access: %w", k8sErr)
@@ -229,10 +246,34 @@ func runExport(ctx context.Context, path, dbDir string, dbUpdate bool, namespace
 		K8sErr: k8sErr,
 		DB:     func() scanner.DBStatus { return dbStatus },
 	})
-	if err := os.WriteFile(path, server.ExportHTML(), 0o644); err != nil {
-		return err
+
+	if req.htmlPath != "" {
+		if err := os.WriteFile(req.htmlPath, server.ExportHTML(), 0o644); err != nil {
+			return err
+		}
+		log.Printf("HTML report exported to %s", req.htmlPath)
 	}
-	log.Printf("report exported to %s", path)
+	if req.sbomDir != "" {
+		n, err := server.ExportSBOMs(req.sbomDir)
+		if err != nil {
+			return err
+		}
+		log.Printf("%d SBOM(s) exported to %s", n, req.sbomDir)
+	}
+	if req.grypeDir != "" {
+		n, err := server.ExportGrype(req.grypeDir)
+		if err != nil {
+			return err
+		}
+		log.Printf("%d grype report(s) exported to %s", n, req.grypeDir)
+	}
+	if req.allDir != "" {
+		htmlPath, sbomCount, grypeCount, err := server.ExportAll(req.allDir)
+		if err != nil {
+			return err
+		}
+		log.Printf("full report exported to %s (%s, %d SBOM(s), %d grype report(s))", req.allDir, htmlPath, sbomCount, grypeCount)
+	}
 	return nil
 }
 

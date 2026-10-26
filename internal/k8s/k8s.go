@@ -68,19 +68,20 @@ func New() (*Client, string, error) {
 	return &Client{cs: cs}, mode, nil
 }
 
-// Discover lists pods (in the given namespace, or all namespaces when empty)
-// and collects every unique container image together with the docker config
-// payloads of the imagePullSecrets that apply to it and the workloads
-// (namespace + controller) running it.
-func (c *Client) Discover(ctx context.Context, namespace string) (*Discovery, error) {
-	pods, err := c.cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+// Discover lists pods (restricted to the given namespaces, or all namespaces
+// when empty) and collects every unique container image together with the
+// docker config payloads of the imagePullSecrets that apply to it and the
+// workloads (namespace + controller) running it.
+func (c *Client) Discover(ctx context.Context, namespaces []string) (*Discovery, error) {
+	pods, err := c.cs.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list pods: %w", err)
 	}
-	rsOwners, err := c.replicaSetOwners(ctx, namespace)
+	rsOwners, err := c.replicaSetOwners(ctx, namespaces)
 	if err != nil {
 		return nil, err
 	}
+	allowed := namespaceSet(namespaces)
 
 	images := map[string]struct{}{}
 	pullSecrets := map[string][][]byte{}
@@ -90,6 +91,11 @@ func (c *Client) Discover(ctx context.Context, namespace string) (*Discovery, er
 
 	for i := range pods.Items {
 		pod := &pods.Items[i]
+		if len(allowed) > 0 {
+			if _, ok := allowed[pod.Namespace]; !ok {
+				continue
+			}
+		}
 		payloads := c.payloadsForPod(ctx, pod, saCache, payloadCache)
 		inst := Instance{Namespace: pod.Namespace, Controller: controllerFor(pod, rsOwners)}
 
@@ -119,16 +125,23 @@ func (c *Client) Discover(ctx context.Context, namespace string) (*Discovery, er
 	return out, nil
 }
 
-// replicaSetOwners maps "namespace/name" of every ReplicaSet to the
-// "kind/name" of the workload that owns it (usually a Deployment).
-func (c *Client) replicaSetOwners(ctx context.Context, namespace string) (map[string]string, error) {
-	rss, err := c.cs.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{})
+// replicaSetOwners maps "namespace/name" of every ReplicaSet (in the given
+// namespaces, or all when empty) to the "kind/name" of the workload that
+// owns it (usually a Deployment).
+func (c *Client) replicaSetOwners(ctx context.Context, namespaces []string) (map[string]string, error) {
+	rss, err := c.cs.AppsV1().ReplicaSets("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list replicasets: %w", err)
 	}
+	allowed := namespaceSet(namespaces)
 	owners := map[string]string{}
 	for i := range rss.Items {
 		rs := &rss.Items[i]
+		if len(allowed) > 0 {
+			if _, ok := allowed[rs.Namespace]; !ok {
+				continue
+			}
+		}
 		key := rs.Namespace + "/" + rs.Name
 		owners[key] = "replicaset/" + rs.Name
 		if ref := controllerRef(rs.OwnerReferences); ref != nil {
@@ -136,6 +149,18 @@ func (c *Client) replicaSetOwners(ctx context.Context, namespace string) (map[st
 		}
 	}
 	return owners, nil
+}
+
+// namespaceSet builds a lookup set from a namespace list.
+func namespaceSet(namespaces []string) map[string]struct{} {
+	if len(namespaces) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(namespaces))
+	for _, ns := range namespaces {
+		out[ns] = struct{}{}
+	}
+	return out
 }
 
 // controllerRef returns the owner reference flagged as the controller of the

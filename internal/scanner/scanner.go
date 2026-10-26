@@ -256,7 +256,7 @@ func (s *Store) DBError() string {
 // Options configures a Scanner.
 type Options struct {
 	Client      *k8s.Client
-	Namespace   string
+	Namespaces  []string               // restrict scanning to these namespaces (empty = all)
 	Provider    vulnerability.Provider // initial grype vulnerability DB provider (may be nil; set later via SetProvider)
 	Platform    string
 	Timeout     time.Duration
@@ -316,7 +316,7 @@ func defaultMatchers() []match.Matcher {
 
 // RunOnce discovers the current set of images and scans all of them.
 func (s *Scanner) RunOnce(ctx context.Context) error {
-	disc, err := s.opts.Client.Discover(ctx, s.opts.Namespace)
+	disc, err := s.opts.Client.Discover(ctx, s.opts.Namespaces)
 	if err != nil {
 		return fmt.Errorf("discover images: %w", err)
 	}

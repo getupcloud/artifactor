@@ -1,10 +1,12 @@
 package k8s
 
 import (
+	"context"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func ctrl(controller bool, kind, name string) metav1.OwnerReference {
@@ -56,6 +58,46 @@ func TestControllerRef(t *testing.T) {
 	}
 	if controllerRef([]metav1.OwnerReference{ctrl(false, "X", "y")}) != nil {
 		t.Fatal("expected nil for no controller ref")
+	}
+}
+
+func TestDiscoverNamespaceFilter(t *testing.T) {
+	pod := func(name, ns, image string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Image: image}}},
+		}
+	}
+	cs := fake.NewSimpleClientset(
+		pod("a", "ns-a", "img-a:1"),
+		pod("b", "ns-b", "img-b:1"),
+		pod("c", "ns-c", "img-c:1"),
+	)
+	c := &Client{cs: cs}
+	ctx := context.Background()
+
+	disc, err := c.Discover(ctx, []string{"ns-a", "ns-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disc.Images) != 2 || disc.Images[0] != "img-a:1" || disc.Images[1] != "img-b:1" {
+		t.Fatalf("filtered images = %v, want [img-a:1 img-b:1]", disc.Images)
+	}
+
+	disc, err = c.Discover(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disc.Images) != 3 {
+		t.Fatalf("unfiltered images = %v, want 3", disc.Images)
+	}
+
+	disc, err = c.Discover(ctx, []string{"ns-c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disc.Images) != 1 || disc.Images[0] != "img-c:1" {
+		t.Fatalf("ns-c images = %v", disc.Images)
 	}
 }
 

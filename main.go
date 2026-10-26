@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -31,10 +32,29 @@ var version = "dev"
 //go:embed web/index.html
 var spaHTML []byte
 
+// stringList is a repeatable flag value; each occurrence appends to the list
+// (values may also be comma-separated).
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ",") }
+
+func (s *stringList) Set(v string) error {
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			*s = append(*s, part)
+		}
+	}
+	return nil
+}
+
 func main() {
+	var namespaces stringList
+	if env := os.Getenv("NAMESPACE"); env != "" {
+		_ = namespaces.Set(env)
+	}
+	flag.Var(&namespaces, "namespace", "only scan pods in this namespace (repeatable or comma-separated; empty = all namespaces)")
 	var (
 		port        = flag.Int("port", envInt("PORT", 8080), "HTTP listen port")
-		namespace   = flag.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in this namespace (empty = all namespaces)")
 		interval    = flag.Duration("scan-interval", envDuration("SCAN_INTERVAL", 6*time.Hour), "automatic rescan interval (0 disables)")
 		concurrency = flag.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
 		dbDir       = flag.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
@@ -65,7 +85,7 @@ func main() {
 			sbomDir:  *exportSBOM,
 			grypeDir: *exportGrype,
 			allDir:   *exportAll,
-		}, *dbDir, *dbUpdate, *namespace, *platform, *scanTimeout, *concurrency)
+		}, *dbDir, *dbUpdate, namespaces, *platform, *scanTimeout, *concurrency)
 		if err != nil {
 			log.Fatalf("export: %v", err)
 		}
@@ -87,7 +107,7 @@ func main() {
 	if k8sClient != nil {
 		sc = scanner.New(scanner.Options{
 			Client:      k8sClient,
-			Namespace:   *namespace,
+			Namespaces:  namespaces,
 			Platform:    *platform,
 			Timeout:     *scanTimeout,
 			Concurrency: *concurrency,
@@ -206,7 +226,7 @@ type exportRequest struct {
 
 // runExport implements the --export* flags: prepare the DB, scan every image
 // once, write the requested artifacts, and exit.
-func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, namespace, platform string, scanTimeout time.Duration, concurrency int) error {
+func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, namespaces []string, platform string, scanTimeout time.Duration, concurrency int) error {
 	k8sClient, mode, k8sErr := k8s.New()
 	if k8sErr != nil {
 		return fmt.Errorf("no cluster access: %w", k8sErr)
@@ -225,7 +245,7 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 	}
 	sc := scanner.New(scanner.Options{
 		Client:      k8sClient,
-		Namespace:   namespace,
+		Namespaces:  namespaces,
 		Provider:    provider,
 		Platform:    platform,
 		Timeout:     scanTimeout,

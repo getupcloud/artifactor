@@ -115,15 +115,16 @@ td.chev { width: 24px; color: var(--muted); text-align: center; user-select: non
 tr.expand-row td { background: var(--bg); padding: 14px 18px; }
 tr.expand-row:hover td { background: var(--bg); }
 .exp-body { max-width: 920px; }
-.exp-imgs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.exp-imgs-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .exp-label { color: var(--muted); font-size: 12px; }
+.exp-imgs { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-bottom: 10px; }
 .img-tag {
-  display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  display: flex; flex-direction: column; gap: 2px;
   background: var(--panel2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 3px 10px; font-size: 12px; cursor: pointer;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; max-width: 380px;
+  border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
-.img-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
+.img-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .img-meta { color: var(--muted); font-size: 10.5px; }
 .img-tag:hover { border-color: var(--accent); color: var(--accent); }
 .img-tag.current { border-color: var(--accent); color: var(--accent); }
@@ -222,6 +223,7 @@ const state = {
   sevFilter: new Set(),// empty set = no filtering
   status: null,
   imageSearch: "",
+  lastQuery: null,     // /api/cves query string of the last render
 };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
@@ -309,8 +311,16 @@ async function loadCVEs() {
   if (state.sevFilter.size) params.set("severity", [...state.sevFilter].join(","));
 
   let rows;
-  try { rows = await api("/api/cves?" + params.toString()); }
+  const query = params.toString();
+  try { rows = await api("/api/cves?" + query); }
   catch { return; }
+
+  // A changed query means the user changed a filter: forget open expansions.
+  // Background refreshes reuse the same query and keep them open.
+  if (query !== state.lastQuery) {
+    expanded.clear();
+    state.lastQuery = query;
+  }
 
   const tbody = $("cve-tbody");
   tbody.innerHTML = "";
@@ -319,6 +329,7 @@ async function loadCVEs() {
   $("cve-count").textContent = rows.length + " CVE(s)";
   $("th-image").style.display = state.selected ? "none" : "";
 
+  const trByKey = new Map();
   for (const c of rows) {
     const tr = document.createElement("tr");
     tr.className = "cve-row";
@@ -336,20 +347,66 @@ async function loadCVEs() {
       '<td class="fixed mono">' + (fixed || "—") + "</td>" +
       (state.selected ? "" : '<td class="mono">' + esc(c.image) + "</td>") +
       "<td>" + esc(c.matcher) + "</td>";
+    trByKey.set(rowKey(c), tr);
     tbody.appendChild(tr);
+  }
+  // re-open rows that were expanded before this (re)render
+  for (const c of rows) {
+    const key = rowKey(c);
+    const tr = trByKey.get(key);
+    if (tr && expanded.has(key)) {
+      toggleExpansion(tr, c);
+    }
   }
 }
 
+// copyText writes to the clipboard, falling back to a hidden textarea +
+// execCommand for non-secure contexts (e.g. plain http hosts behind
+// port-forward).
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fall through to the legacy path */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+// rowKey identifies a CVE row across table re-renders, so open expansions
+// survive the periodic background refresh.
+const rowKey = (c) => c.image + "\x00" + c.id + "\x00" + c.package;
+const expanded = new Set();
+
 // toggleExpansion shows, in a row inserted right below the clicked CVE row:
-// the list of images containing the CVE, the full description, and reference
-// URLs. Clicking an image tag selects that image in the sidebar.
+// the vertical list of images containing the CVE (namespace + controller),
+// the full description, and reference URLs. Clicking an image tag selects
+// that image in the sidebar.
 function toggleExpansion(tr, c) {
   const existing = tr.nextElementSibling;
+  const key = rowKey(c);
   if (existing && existing.classList.contains("expand-row")) {
     existing.remove();
     tr.querySelector(".chev").textContent = "▸";
+    expanded.delete(key);
     return;
   }
+  expanded.add(key);
   const colspan = document.querySelectorAll("thead th").length;
   const urls = (c.urls || []).filter((u) => u !== c.dataSource);
   const images = c.images || [];
@@ -358,8 +415,9 @@ function toggleExpansion(tr, c) {
   er.innerHTML = '<td colspan="' + colspan + '"></td>';
   er.firstElementChild.innerHTML =
     '<div class="exp-body">' +
-    '<div class="exp-imgs"><span class="exp-label">Images containing this CVE:</span>' +
-    '<button class="copy-btn" title="Copy the image list (with namespace/controller) to the clipboard">Copy</button>' +
+    '<div class="exp-imgs-head"><span class="exp-label">Images containing this CVE:</span>' +
+    '<button class="copy-btn" title="Copy the image list (with namespace/controller) to the clipboard">Copy</button></div>' +
+    '<div class="exp-imgs">' +
     images.map((ref) =>
       '<span class="img-tag' + (ref.image === c.image ? " current" : "") + '" title="' + esc(ref.image) + '">' +
       '<span class="img-name">' + esc(ref.image) + "</span>" +
@@ -389,12 +447,8 @@ function toggleExpansion(tr, c) {
     const text = images.map((ref) =>
       (ref.namespace ? ref.namespace + "/" + ref.controller + " — " : "") + ref.image
     ).join("\n");
-    try {
-      await navigator.clipboard.writeText(text);
-      copyBtn.textContent = "Copied!";
-    } catch {
-      copyBtn.textContent = "Copy failed";
-    }
+    const ok = await copyText(text);
+    copyBtn.textContent = ok ? "Copied!" : "Copy failed";
     setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
   };
   tr.insertAdjacentElement("afterend", er);

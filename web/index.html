@@ -98,6 +98,10 @@ button.secondary { background: var(--panel2); border: 1px solid var(--border); c
   padding: 10px 12px; margin-bottom: 12px;
 }
 .filters label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.filters label.cb {
+  flex-direction: row; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text); cursor: pointer; margin-top: 14px;
+}
 .filters input[type=text], .filters input[type=search] {
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 7px 10px; font-size: 13px; width: 230px;
@@ -197,6 +201,10 @@ tr.expand-row:hover td { background: var(--bg); }
       <label>CVE ID
         <input type="text" id="cve-filter" placeholder="e.g. CVE-2024-…">
       </label>
+      <label class="cb" title="Show only CVEs that have a fixed version available">
+        <input type="checkbox" id="fixed-filter">
+        Only CVEs with fix
+      </label>
       <button class="secondary" id="clear-btn">Clear filters</button>
       <span class="hint" id="cve-count"></span>
     </div>
@@ -236,12 +244,14 @@ function snapshotFilterCVEs(params) {
   const id = (params.get("id") || "").toLowerCase();
   const sevs = (params.get("severity") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const excluded = (params.get("exclude") || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const fixedOnly = params.get("fixed") === "1";
   const rows = (SNAPSHOT.cves || []).filter((c) =>
     (!image || c.image === image) &&
     (!artifact || (c.package || "").toLowerCase().includes(artifact)) &&
     (!id || (c.id || "").toLowerCase().includes(id)) &&
     (!sevs.length || sevs.includes(c.severity)) &&
-    (!excluded.length || !excluded.includes(c.severity))
+    (!excluded.length || !excluded.includes(c.severity)) &&
+    (!fixedOnly || (c.fixedIn && c.fixedIn.length > 0))
   );
   const rank = Object.fromEntries(SEVS.map((s, i) => [s, i]));
   rows.sort((a, b) =>
@@ -367,6 +377,7 @@ async function loadCVEs() {
   if (artifact) params.set("artifact", artifact);
   const cveId = $("cve-filter").value.trim();
   if (cveId) params.set("id", cveId);
+  if ($("fixed-filter").checked) params.set("fixed", "1");
   // chips start all "on"; clicking one turns that severity OFF (excluded)
   if (state.sevFilter.size) params.set("exclude", [...state.sevFilter].join(","));
 
@@ -552,6 +563,7 @@ $("artifact-filter").oninput = () => {
   debounce = setTimeout(() => { loadCVEs(); loadArtifacts(); }, 250);
 };
 $("cve-filter").oninput = () => { clearTimeout(debounce); debounce = setTimeout(loadCVEs, 250); };
+$("fixed-filter").onchange = loadCVEs;
 
 for (const el of document.querySelectorAll(".stat.sev")) {
   el.onclick = () => {
@@ -566,6 +578,7 @@ for (const el of document.querySelectorAll(".stat.sev")) {
 $("clear-btn").onclick = () => {
   $("artifact-filter").value = "";
   $("cve-filter").value = "";
+  $("fixed-filter").checked = false;
   state.sevFilter.clear();
   document.querySelectorAll(".stat.sev").forEach((el) => el.classList.remove("off"));
   loadCVEs();

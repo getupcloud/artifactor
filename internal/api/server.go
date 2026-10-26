@@ -172,17 +172,18 @@ func (s *Server) cveRows() []cveOut {
 	return out
 }
 
-// GET /api/cves?image=&artifact=&severity=&exclude=&id=
+// GET /api/cves?image=&artifact=&severity=&exclude=&id=&fixed=1
 // severity accepts a comma-separated include list; exclude accepts a
 // comma-separated list of severities to drop (used by the SPA's severity
-// chips, which start all "on" and turn individual severities off). artifact
-// is a case-insensitive substring match against the syft artifact (package)
-// name.
+// chips, which start all "on" and turn individual severities off); fixed=1
+// keeps only CVEs that have a fixed version available. artifact is a
+// case-insensitive substring match against the syft artifact (package) name.
 func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	image := q.Get("image")
 	idFilter := strings.ToLower(strings.TrimSpace(q.Get("id")))
 	artifactFilter := scanner.PackageNameFilter(q.Get("artifact"))
+	fixedOnly := q.Get("fixed") == "1"
 
 	severities := map[string]struct{}{}
 	for _, sev := range strings.Split(q.Get("severity"), ",") {
@@ -216,6 +217,9 @@ func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if idFilter != "" && !strings.Contains(strings.ToLower(row.ID), idFilter) {
+			continue
+		}
+		if fixedOnly && len(row.FixedIn) == 0 {
 			continue
 		}
 		out = append(out, row)

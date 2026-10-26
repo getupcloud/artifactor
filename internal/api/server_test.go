@@ -161,6 +161,24 @@ func TestCVESeverityAndImageFilter(t *testing.T) {
 	}
 }
 
+func TestCVEFixedFilter(t *testing.T) {
+	srv, _ := testServer(t)
+	// fixture: only CVE-2024-0001 (libssl3) has FixedIn set
+	rows := getJSON(t, srv.Handler(), "/api/cves?fixed=1")
+	if len(rows) != 1 || rows[0]["id"] != "CVE-2024-0001" {
+		t.Fatalf("fixed=1 rows = %v, want only CVE-2024-0001", rows)
+	}
+	for _, r := range rows {
+		if len(r["fixedIn"].([]any)) == 0 {
+			t.Errorf("row without fix leaked: %v", r)
+		}
+	}
+	// without the flag all 4 rows come back
+	if rows := getJSON(t, srv.Handler(), "/api/cves"); len(rows) != 4 {
+		t.Fatalf("unfiltered rows = %d, want 4", len(rows))
+	}
+}
+
 func TestCVEImagesList(t *testing.T) {
 	srv, _ := testServer(t)
 	rows := getJSON(t, srv.Handler(), "/api/cves")

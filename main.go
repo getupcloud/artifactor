@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	_ "embed" // required for the go:embed directive below
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -21,6 +20,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	flag "github.com/spf13/pflag" // flags defined and displayed with --
 
 	"github.com/getupcloud/artifactor/internal/api"
 	"github.com/getupcloud/artifactor/internal/k8s"

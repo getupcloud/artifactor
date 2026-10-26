@@ -4,6 +4,13 @@ Web app (Pod + Service no Kubernetes) que escaneia **todas as imagens de contêi
 
 O resultado é apresentado em uma **SPA** que permite filtrar os CVEs pelos **nomes dos artefatos (pacotes) encontrados pelo syft**, por severidade e por ID de CVE.
 
+## TL;DR;
+
+```
+make build
+make export
+```
+
 ## Como funciona
 
 1. **Descoberta (client-go)**: lista os Pods de todos os namespaces e coleta as imagens de `containers`, `initContainers` e `ephemeralContainers`, registrando também o **namespace e o controller** (Deployment/StatefulSet/DaemonSet/Job…) dono de cada Pod (via ownerReferences + ReplicaSets).

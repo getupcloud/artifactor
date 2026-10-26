@@ -130,6 +130,10 @@ Para usar sua própria imagem, ajuste `deploy/deployment.yaml` ou:
 kubectl -n artifactor set image deployment/artifactor scanner=ghcr.io/getupcloud/artifactor:0.0.1
 ```
 
+## Release
+
+O workflow `release` (disparado manualmente na aba **Actions**) lê a variável `VERSION` do Makefile, **falha se a tag `v<VERSION>` já existir** (local ou remoto), cria e publica a tag e roda o GoReleaser: imagens multi-arch no ghcr.io (`:<VERSION>`, `:<sha>` e `:latest`) + GitHub Release com os binários. Para lançar uma nova versão, edite `VERSION` no Makefile e dispare o workflow.
+
 ## RBAC
 
 O scanner usa uma ServiceAccount dedicada com permissões mínimas (ClusterRole):

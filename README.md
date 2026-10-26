@@ -33,7 +33,8 @@ Dockerfile / Makefile       build da imagem e automação
 |---|---|---|
 | GET | `/api/status` | modo do client k8s, estado do banco grype, se um scan está rodando |
 | GET | `/api/images` | resumo por imagem: status, contagem de CVEs por severidade |
-| GET | `/api/cves?image=&artifact=&severity=&id=` | CVEs filtrados (artifact = substring do nome do pacote syft) |
+| GET | `/api/cves?image=&artifact=&severity=&exclude=&id=&fixed=&namespace=` | CVEs filtrados (artifact = substring do nome do pacote syft) |
+| GET | `/api/namespaces` | namespaces distintos dos workloads das imagens escaneadas |
 | GET | `/api/artifacts?image=&q=` | nomes distintos de artefatos (pacotes) encontrados pelo syft |
 | POST | `/api/scan` | dispara um rescan de todas as imagens |
 | GET | `/api/export` | baixa o relatório como um **único HTML auto-contido** (dados embutidos; funciona offline) |

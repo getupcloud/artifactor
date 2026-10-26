@@ -45,6 +45,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/images", s.handleImages)
 	mux.HandleFunc("GET /api/cves", s.handleCVEs)
+	mux.HandleFunc("GET /api/namespaces", s.handleNamespaces)
 	mux.HandleFunc("GET /api/artifacts", s.handleArtifacts)
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("POST /api/scan", s.handleScan)
@@ -172,15 +173,17 @@ func (s *Server) cveRows() []cveOut {
 	return out
 }
 
-// GET /api/cves?image=&artifact=&severity=&exclude=&id=&fixed=1
+// GET /api/cves?image=&artifact=&severity=&exclude=&id=&fixed=1&namespace=
 // severity accepts a comma-separated include list; exclude accepts a
 // comma-separated list of severities to drop (used by the SPA's severity
 // chips, which start all "on" and turn individual severities off); fixed=1
-// keeps only CVEs that have a fixed version available. artifact is a
+// keeps only CVEs that have a fixed version available; namespace keeps only
+// CVEs whose affected images run in that namespace. artifact is a
 // case-insensitive substring match against the syft artifact (package) name.
 func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	image := q.Get("image")
+	namespace := q.Get("namespace")
 	idFilter := strings.ToLower(strings.TrimSpace(q.Get("id")))
 	artifactFilter := scanner.PackageNameFilter(q.Get("artifact"))
 	fixedOnly := q.Get("fixed") == "1"
@@ -222,9 +225,48 @@ func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 		if fixedOnly && len(row.FixedIn) == 0 {
 			continue
 		}
+		if namespace != "" && !rowRunsInNamespace(row, namespace) {
+			continue
+		}
 		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// rowRunsInNamespace reports whether the row's own image runs in the given
+// namespace (a CVE row represents one package in one image).
+func rowRunsInNamespace(row cveOut, namespace string) bool {
+	for _, ref := range row.Images {
+		if ref.Image == row.Image && ref.Namespace == namespace {
+			return true
+		}
+	}
+	return false
+}
+
+// namespaceNames returns the distinct namespaces of the workloads running
+// scanned images, sorted.
+func (s *Server) namespaceNames() []string {
+	set := map[string]struct{}{}
+	for _, res := range s.opts.Store.Snapshot("") {
+		for _, inst := range res.Instances {
+			if inst.Namespace != "" {
+				set[inst.Namespace] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for ns := range set {
+		out = append(out, ns)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// GET /api/namespaces returns the distinct namespaces of the workloads
+// running scanned images (feeds the SPA's namespace selector).
+func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.namespaceNames())
 }
 
 // artifactNames returns the distinct syft artifact (package) names of scanned
@@ -263,6 +305,7 @@ type exportSnapshot struct {
 	Status           map[string]any      `json:"status"`
 	Images           []scanner.Summary   `json:"images"`
 	Cves             []cveOut            `json:"cves"`
+	Namespaces       []string            `json:"namespaces"`
 	Artifacts        []string            `json:"artifacts"`
 	ArtifactsByImage map[string][]string `json:"artifactsByImage"`
 }
@@ -281,6 +324,7 @@ func (s *Server) buildSnapshot() exportSnapshot {
 		Status:           s.statusPayload(),
 		Images:           s.opts.Store.Summaries(),
 		Cves:             s.cveRows(),
+		Namespaces:       s.namespaceNames(),
 		Artifacts:        s.artifactNames("", ""),
 		ArtifactsByImage: byImage,
 	}

@@ -182,6 +182,34 @@ func TestCVEFixedFilter(t *testing.T) {
 	}
 }
 
+func TestNamespaceEndpointAndFilter(t *testing.T) {
+	srv, _ := testServer(t)
+	names := getJSONStrings(t, srv.Handler(), "/api/namespaces")
+	want := []string{"default", "ingress", "web"}
+	if len(names) != 3 || names[0] != want[0] || names[1] != want[1] || names[2] != want[2] {
+		t.Fatalf("namespaces = %v, want %v", names, want)
+	}
+
+	// web: CVE-2024-0001 (nginx web+ingress) and CVE-2024-0002 (nginx web + busybox default)
+	if rows := getJSON(t, srv.Handler(), "/api/cves?namespace=web"); len(rows) != 2 {
+		t.Fatalf("namespace=web rows = %d, want 2", len(rows))
+	}
+	// default: the two busybox CVEs (busybox runs in default; nginx does not)
+	rows := getJSON(t, srv.Handler(), "/api/cves?namespace=default")
+	if len(rows) != 2 {
+		t.Fatalf("namespace=default rows = %d, want 2", len(rows))
+	}
+	for _, r := range rows {
+		if r["image"] != "busybox:1.36" {
+			t.Errorf("unexpected row for namespace=default: %v", r)
+		}
+	}
+	// unknown namespace: nothing
+	if rows := getJSON(t, srv.Handler(), "/api/cves?namespace=nope"); len(rows) != 0 {
+		t.Fatalf("namespace=nope rows = %d, want 0", len(rows))
+	}
+}
+
 func TestCVEImagesList(t *testing.T) {
 	srv, _ := testServer(t)
 	rows := getJSON(t, srv.Handler(), "/api/cves")
@@ -263,6 +291,7 @@ func TestExportEndpoint(t *testing.T) {
 		GeneratedAt string           `json:"generatedAt"`
 		Images      []map[string]any `json:"images"`
 		Cves        []map[string]any `json:"cves"`
+		Namespaces  []string         `json:"namespaces"`
 	}
 	if err := json.Unmarshal([]byte(body[i+len(prefix):i+j]), &snap); err != nil {
 		t.Fatalf("snapshot JSON invalid: %v", err)
@@ -272,6 +301,9 @@ func TestExportEndpoint(t *testing.T) {
 	}
 	if len(snap.Cves) != 4 { // 2 in nginx + 2 in busybox
 		t.Errorf("snapshot cves = %d, want 4", len(snap.Cves))
+	}
+	if len(snap.Namespaces) != 3 {
+		t.Errorf("snapshot namespaces = %v, want 3", snap.Namespaces)
 	}
 	if snap.GeneratedAt == "" {
 		t.Error("snapshot missing generatedAt")

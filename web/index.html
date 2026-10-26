@@ -102,6 +102,11 @@ button.secondary { background: var(--panel2); border: 1px solid var(--border); c
   flex-direction: row; align-items: center; gap: 6px;
   font-size: 13px; color: var(--text); cursor: pointer; margin-top: 14px;
 }
+.filters label.ns { margin-top: 14px; }
+.filters select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 10px; font-size: 13px; width: 200px;
+}
 .filters input[type=text], .filters input[type=search] {
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 7px 10px; font-size: 13px; width: 230px;
@@ -205,6 +210,12 @@ tr.expand-row:hover td { background: var(--bg); }
         <input type="checkbox" id="fixed-filter">
         Only CVEs with fix
       </label>
+      <label class="ns" title="Show only CVEs affecting workloads in this namespace">
+        Namespace
+        <select id="namespace-filter">
+          <option value="">All namespaces</option>
+        </select>
+      </label>
       <button class="secondary" id="clear-btn">Clear filters</button>
       <span class="hint" id="cve-count"></span>
     </div>
@@ -240,6 +251,7 @@ const SNAPSHOT = (() => {
 
 function snapshotFilterCVEs(params) {
   const image = params.get("image") || "";
+  const namespace = params.get("namespace") || "";
   const artifact = (params.get("artifact") || "").toLowerCase();
   const id = (params.get("id") || "").toLowerCase();
   const sevs = (params.get("severity") || "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -247,6 +259,7 @@ function snapshotFilterCVEs(params) {
   const fixedOnly = params.get("fixed") === "1";
   const rows = (SNAPSHOT.cves || []).filter((c) =>
     (!image || c.image === image) &&
+    (!namespace || (c.images || []).some((ref) => ref.image === c.image && ref.namespace === namespace)) &&
     (!artifact || (c.package || "").toLowerCase().includes(artifact)) &&
     (!id || (c.id || "").toLowerCase().includes(id)) &&
     (!sevs.length || sevs.includes(c.severity)) &&
@@ -270,6 +283,8 @@ function snapshotAPI(path) {
       return Promise.resolve(SNAPSHOT.images || []);
     case "/api/cves":
       return Promise.resolve(snapshotFilterCVEs(url.searchParams));
+    case "/api/namespaces":
+      return Promise.resolve(SNAPSHOT.namespaces || []);
     case "/api/artifacts": {
       const image = url.searchParams.get("image") || "";
       const q = (url.searchParams.get("q") || "").toLowerCase();
@@ -377,6 +392,8 @@ async function loadCVEs() {
   if (artifact) params.set("artifact", artifact);
   const cveId = $("cve-filter").value.trim();
   if (cveId) params.set("id", cveId);
+  const ns = $("namespace-filter").value;
+  if (ns) params.set("namespace", ns);
   if ($("fixed-filter").checked) params.set("fixed", "1");
   // chips start all "on"; clicking one turns that severity OFF (excluded)
   if (state.sevFilter.size) params.set("exclude", [...state.sevFilter].join(","));
@@ -564,6 +581,7 @@ $("artifact-filter").oninput = () => {
 };
 $("cve-filter").oninput = () => { clearTimeout(debounce); debounce = setTimeout(loadCVEs, 250); };
 $("fixed-filter").onchange = loadCVEs;
+$("namespace-filter").onchange = loadCVEs;
 
 for (const el of document.querySelectorAll(".stat.sev")) {
   el.onclick = () => {
@@ -579,17 +597,41 @@ $("clear-btn").onclick = () => {
   $("artifact-filter").value = "";
   $("cve-filter").value = "";
   $("fixed-filter").checked = false;
+  $("namespace-filter").value = "";
   state.sevFilter.clear();
   document.querySelectorAll(".stat.sev").forEach((el) => el.classList.remove("off"));
   loadCVEs();
   loadArtifacts();
 };
 
+/* ---------- namespace selector ---------- */
+
+let lastNamespacesKey = null;
+async function loadNamespaces() {
+  let namespaces;
+  try { namespaces = await api("/api/namespaces"); }
+  catch { return; }
+  const key = namespaces.join(",");
+  if (key === lastNamespacesKey) return; // nothing changed, keep selection
+  lastNamespacesKey = key;
+  const sel = $("namespace-filter");
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All namespaces</option>';
+  for (const ns of namespaces) {
+    const opt = document.createElement("option");
+    opt.value = ns;
+    opt.textContent = ns;
+    sel.appendChild(opt);
+  }
+  sel.value = namespaces.includes(current) ? current : "";
+}
+
 /* ---------- polling ---------- */
 
 async function poll() {
   await refreshStatus();
   await refreshImages().catch(() => {});
+  loadNamespaces().catch(() => {});
   loadCVEs().catch(() => {});
   if (state.status && state.status.scanning) loadArtifacts().catch(() => {});
 }

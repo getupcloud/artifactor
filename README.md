@@ -44,7 +44,7 @@ Dockerfile / Makefile       build da imagem e automação
 | Flag | Env | Default | Descrição |
 |---|---|---|---|
 | `--port` | `PORT` | `8080` | porta HTTP |
-| `--namespace` | `NAMESPACE` | (todos) | restringe o scan a namespaces; **repetível** (`--namespace a --namespace b`) ou separado por vírgulas (`--namespace a,b`); vazio = todos |
+| `--namespace` | `NAMESPACE` | (todos) | restringe o scan a uma **lista de namespaces separados por vírgula** (`--namespace a,b`); vazio = todos |
 | `--scan-interval` | `SCAN_INTERVAL` | `6h` | intervalo de rescan automático (`0` desliga) |
 | `--concurrency` | `CONCURRENCY` | `3` | scans paralelos |
 | `--db-dir` | `DB_DIR` | cache do usuário | diretório do banco de vulnerabilidades do grype |

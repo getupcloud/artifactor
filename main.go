@@ -32,29 +32,10 @@ var version = "dev"
 //go:embed web/index.html
 var spaHTML []byte
 
-// stringList is a repeatable flag value; each occurrence appends to the list
-// (values may also be comma-separated).
-type stringList []string
-
-func (s *stringList) String() string { return strings.Join(*s, ",") }
-
-func (s *stringList) Set(v string) error {
-	for _, part := range strings.Split(v, ",") {
-		if part = strings.TrimSpace(part); part != "" {
-			*s = append(*s, part)
-		}
-	}
-	return nil
-}
-
 func main() {
-	var namespaces stringList
-	if env := os.Getenv("NAMESPACE"); env != "" {
-		_ = namespaces.Set(env)
-	}
-	flag.Var(&namespaces, "namespace", "only scan pods in this namespace (repeatable or comma-separated; empty = all namespaces)")
 	var (
 		port        = flag.Int("port", envInt("PORT", 8080), "HTTP listen port")
+		namespaceCSV = flag.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in these namespaces (comma-separated list; empty = all namespaces)")
 		interval    = flag.Duration("scan-interval", envDuration("SCAN_INTERVAL", 6*time.Hour), "automatic rescan interval (0 disables)")
 		concurrency = flag.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
 		dbDir       = flag.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
@@ -75,6 +56,8 @@ func main() {
 		fmt.Printf("artifactor %s\n", version)
 		return
 	}
+
+	namespaces := splitNamespaces(*namespaceCSV)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -295,6 +278,25 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		log.Printf("full report exported to %s (%s, %d SBOM(s), %d grype report(s))", req.allDir, htmlPath, sbomCount, grypeCount)
 	}
 	return nil
+}
+
+// splitNamespaces parses a comma-separated namespace list, trimming spaces,
+// dropping empties and duplicates.
+func splitNamespaces(csv string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, part := range strings.Split(csv, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, dup := seen[part]; dup {
+			continue
+		}
+		seen[part] = struct{}{}
+		out = append(out, part)
+	}
+	return out
 }
 
 func defaultDBDir() string {

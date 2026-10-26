@@ -7,8 +7,44 @@ O resultado é apresentado em uma **SPA** que permite filtrar os CVEs pelos **no
 ## TL;DR;
 
 ```
-make build
-make export
+$ make build
+$ make export
+$ xdg-open export/scan.html
+```
+
+
+O diretorio `export` contem o relatorio estatico e auto-contido do scan completo. Basta enviar ao cliente ou usar para analisar as imagens;
+Abaixo está a arvore de aquivos criadas com o scan apenas dos namespaces `flux-system` e `metallb-system`:
+
+```
+$ ./bin/artifactor --namespace flux-system --namespace metallb-system --export export
+$ tree export/
+export/
+├── grype
+│   ├── ghcr.io_fluxcd_helm-controller_v1.1.0.grype.json
+│   ├── ghcr.io_fluxcd_image-automation-controller_v0.39.0.grype.json
+│   ├── ghcr.io_fluxcd_image-reflector-controller_v0.33.0.grype.json
+│   ├── ghcr.io_fluxcd_kustomize-controller_v1.4.0.grype.json
+│   ├── ghcr.io_fluxcd_notification-controller_v1.4.0.grype.json
+│   ├── ghcr.io_fluxcd_source-controller_v1.4.1.grype.json
+│   ├── quay.io_frrouting_frr_10.4.3.grype.json
+│   ├── quay.io_metallb_controller_v0.16.1.grype.json
+│   ├── quay.io_metallb_frr-k8s_v0.0.25.grype.json
+│   └── quay.io_metallb_speaker_v0.16.1.grype.json
+├── sbom
+│   ├── ghcr.io_fluxcd_helm-controller_v1.1.0.sbom.json
+│   ├── ghcr.io_fluxcd_image-automation-controller_v0.39.0.sbom.json
+│   ├── ghcr.io_fluxcd_image-reflector-controller_v0.33.0.sbom.json
+│   ├── ghcr.io_fluxcd_kustomize-controller_v1.4.0.sbom.json
+│   ├── ghcr.io_fluxcd_notification-controller_v1.4.0.sbom.json
+│   ├── ghcr.io_fluxcd_source-controller_v1.4.1.sbom.json
+│   ├── quay.io_frrouting_frr_10.4.3.sbom.json
+│   ├── quay.io_metallb_controller_v0.16.1.sbom.json
+│   ├── quay.io_metallb_frr-k8s_v0.0.25.sbom.json
+│   └── quay.io_metallb_speaker_v0.16.1.sbom.json
+└── scan.html
+
+3 directories, 21 files
 ```
 
 ## Como funciona

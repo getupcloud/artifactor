@@ -1,9 +1,9 @@
-# Build, package and deploy the cluster-image-scanner.
+# Build, package and deploy the artifactor.
 
 VERSION    ?= dev
-IMAGE      ?= cluster-image-scanner:$(VERSION)
+IMAGE      ?= artifactor:$(VERSION)
 REGISTRY   ?=
-NAMESPACE  ?= image-scanner
+NAMESPACE  ?= artifactor
 KUBECTL    ?= kubectl
 
 ifneq ($(REGISTRY),)
@@ -18,7 +18,7 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
 build: ## Compile the binary locally
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/cluster-image-scanner .
+	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/artifactor .
 
 test: ## Run unit tests
 	go test ./... -count=1
@@ -50,10 +50,10 @@ undeploy: ## Remove the Kubernetes resources
 	$(KUBECTL) delete -f deploy/ --ignore-not-found
 
 port-forward: ## Forward local port 8080 to the service
-	$(KUBECTL) port-forward -n $(NAMESPACE) svc/cluster-image-scanner 8080:8080
+	$(KUBECTL) port-forward -n $(NAMESPACE) svc/artifactor 8080:8080
 
 logs: ## Follow the scanner pod logs
-	$(KUBECTL) logs -n $(NAMESPACE) -l app=cluster-image-scanner -f
+	$(KUBECTL) logs -n $(NAMESPACE) -l app=artifactor -f
 
 tidy: ## Tidy the Go module
 	go mod tidy

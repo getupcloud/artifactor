@@ -1,4 +1,4 @@
-# Cluster Image Scanner
+# Artifactor
 
 Web app (Pod + Service no Kubernetes) que escaneia **todas as imagens de contêiner rodando no cluster** em busca de CVEs, usando **syft** e **grype como bibliotecas Go embutidas** (nenhum binário externo é instalado) e o **client-go oficial** para falar com a API do cluster via `kubernetes.default.svc`.
 
@@ -57,8 +57,8 @@ Dockerfile / Makefile       build da imagem e automação
 make build          # binário local
 make run            # dev local (usa ~/.kube/config ou KUBECONFIG)
 make docker-build   # imagem do container (syft+grype já embutidos no binário)
-make deploy         # aplica os manifests (ns image-scanner + RBAC + Deployment + Service)
-make port-forward   # kubectl port-forward svc/cluster-image-scanner 8080:8080
+make deploy         # aplica os manifests (ns artifactor + RBAC + Deployment + Service)
+make port-forward   # kubectl port-forward svc/artifactor 8080:8080
 make logs           # logs do Pod
 ```
 
@@ -66,8 +66,8 @@ Depois do port-forward, abra **http://localhost:8080**.
 
 Para usar sua própria imagem, ajuste `deploy/deployment.yaml` ou:
 ```bash
-make docker-build docker-push REGISTRY=registry.exemplo.com IMAGE=image-scanner:v1
-kubectl -n image-scanner set image deployment/cluster-image-scanner scanner=registry.exemplo.com/image-scanner:v1
+make docker-build docker-push REGISTRY=registry.exemplo.com IMAGE=artifactor:v1
+kubectl -n artifactor set image deployment/artifactor scanner=registry.exemplo.com/artifactor:v1
 ```
 
 ## RBAC

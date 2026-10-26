@@ -1,4 +1,4 @@
-// Command cluster-image-scanner discovers every container image running in a
+// Command artifactor discovers every container image running in a
 // Kubernetes cluster (via the kubernetes.default.svc endpoint when running
 // in-cluster), scans each one with syft (SBOM) and grype (CVE matching) used
 // as embedded Go libraries, honoring the imagePullSecrets attached to pods
@@ -21,9 +21,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/cluster-image-scanner/internal/api"
-	"github.com/example/cluster-image-scanner/internal/k8s"
-	"github.com/example/cluster-image-scanner/internal/scanner"
+	"github.com/getupcloud/artifactor/internal/api"
+	"github.com/getupcloud/artifactor/internal/k8s"
+	"github.com/getupcloud/artifactor/internal/scanner"
 )
 
 var version = "dev"
@@ -44,11 +44,11 @@ func main() {
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
-	log.SetPrefix("cluster-image-scanner: ")
+	log.SetPrefix("artifactor: ")
 	log.SetFlags(log.LstdFlags)
 
 	if *showVersion {
-		fmt.Printf("cluster-image-scanner %s\n", version)
+		fmt.Printf("artifactor %s\n", version)
 		return
 	}
 
@@ -181,7 +181,7 @@ func main() {
 
 func defaultDBDir() string {
 	if dir, err := os.UserCacheDir(); err == nil {
-		return filepath.Join(dir, "cluster-image-scanner", "db")
+		return filepath.Join(dir, "artifactor", "db")
 	}
 	return "grype-db"
 }

@@ -1,4 +1,4 @@
-module github.com/example/cluster-image-scanner
+module github.com/getupcloud/artifactor
 
 go 1.27.3
 

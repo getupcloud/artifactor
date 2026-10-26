@@ -24,8 +24,8 @@ import (
 	"github.com/anchore/stereoscope/pkg/image"
 	"github.com/anchore/syft/syft"
 
-	"github.com/example/cluster-image-scanner/internal/k8s"
-	"github.com/example/cluster-image-scanner/internal/registryauth"
+	"github.com/getupcloud/artifactor/internal/k8s"
+	"github.com/getupcloud/artifactor/internal/registryauth"
 )
 
 // Scan status values.

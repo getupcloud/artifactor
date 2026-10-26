@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/cluster-image-scanner/internal/k8s"
-	"github.com/example/cluster-image-scanner/internal/scanner"
+	"github.com/getupcloud/artifactor/internal/k8s"
+	"github.com/getupcloud/artifactor/internal/scanner"
 )
 
 func testServer(t *testing.T) (*Server, *scanner.Store) {

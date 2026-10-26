@@ -26,13 +26,13 @@ type DBStatus struct {
 func NewProvider(dbRoot, appVersion string, autoUpdate bool) (vulnerability.Provider, DBStatus, error) {
 	status := DBStatus{Dir: dbRoot}
 
-	cfg := installation.DefaultConfig(clio.Identification{Name: "cluster-image-scanner", Version: appVersion})
+	cfg := installation.DefaultConfig(clio.Identification{Name: "artifactor", Version: appVersion})
 	cfg.DBRootDir = dbRoot
 	cfg.ValidateAge = false // a stale DB is better than no DB
 	cfg.MaxAllowedBuiltAge = 90 * 24 * time.Hour
 
 	clientCfg := distribution.DefaultConfig()
-	clientCfg.ID = clio.Identification{Name: "cluster-image-scanner", Version: appVersion}
+	clientCfg.ID = clio.Identification{Name: "artifactor", Version: appVersion}
 	client, err := distribution.NewClient(clientCfg)
 	if err != nil {
 		return nil, status, fmt.Errorf("create db client: %w", err)

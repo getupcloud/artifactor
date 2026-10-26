@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cluster-image-scanner
-  namespace: image-scanner
+  name: artifactor
+  namespace: artifactor
   labels:
-    app: cluster-image-scanner
+    app: artifactor
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: cluster-image-scanner
+      app: artifactor
   template:
     metadata:
       labels:
-        app: cluster-image-scanner
+        app: artifactor
     spec:
-      serviceAccountName: cluster-image-scanner
+      serviceAccountName: artifactor
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: scanner
-          image: cluster-image-scanner:dev # build with `make docker-build` and set your tag
+          image: artifactor:dev # build with `make docker-build` and set your tag
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

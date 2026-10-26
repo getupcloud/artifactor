@@ -1,7 +1,7 @@
 # Build, package and deploy the artifactor.
 
-VERSION    ?= dev
-IMAGE      ?= artifactor:$(VERSION)
+VERSION    ?= 0.0.1
+IMAGE      ?= ghcr.io/getupcloud/artifactor:$(VERSION)
 REGISTRY   ?=
 NAMESPACE  ?= artifactor
 KUBECTL    ?= kubectl
@@ -12,7 +12,7 @@ else
 FULL_IMAGE := $(IMAGE)
 endif
 
-.PHONY: help build test vet fmt run docker-build docker-push deploy undeploy port-forward logs tidy clean
+.PHONY: help build test vet fmt run export docker-build docker-push deploy undeploy port-forward logs tidy clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -31,6 +31,9 @@ fmt: ## Format the code
 
 run: ## Run locally against your kubeconfig (dev mode)
 	go run . -db-dir ./grype-db
+
+export: ## Run locally against your kubeconfig (dev mode) and export to scan.html
+	rm -f scan.html && go run . -db-dir ./grype-db -export scan.html
 
 docker-build: ## Build the container image
 	docker build --build-arg VERSION=$(VERSION) -t $(FULL_IMAGE) .

@@ -34,7 +34,7 @@ spec:
             - name: DB_DIR
               value: /data/db
             - name: SCAN_INTERVAL
-              value: 6h
+              value: "0"
             - name: CONCURRENCY
               value: "3"
             # skip the EC2 IMDS fallback when no IRSA/web-identity creds

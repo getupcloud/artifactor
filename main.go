@@ -77,7 +77,7 @@ func runScanCmd(args []string) {
 	var (
 		port         = fs.Int("port", envInt("PORT", 8080), "HTTP listen port")
 		namespaceCSV = fs.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in these namespaces (comma-separated list; empty = all namespaces)")
-		interval     = fs.Duration("scan-interval", envDuration("SCAN_INTERVAL", 6*time.Hour), "automatic rescan interval (0 disables)")
+		interval     = fs.Duration("scan-interval", envDuration("SCAN_INTERVAL", 0), "automatic rescan interval (0 disables)")
 		concurrency  = fs.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
 		dbDir        = fs.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
 		dbUpdate     = fs.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")

@@ -34,6 +34,15 @@ var version = "dev"
 var spaHTML []byte
 
 func main() {
+	// Subcommands: install / uninstall deploy the embedded manifests.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "install", "uninstall":
+			runInstallCmd(os.Args[1], os.Args[2:])
+			return
+		}
+	}
+
 	var (
 		port         = flag.Int("port", envInt("PORT", 8080), "HTTP listen port")
 		namespaceCSV = flag.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in these namespaces (comma-separated list; empty = all namespaces)")
@@ -49,6 +58,10 @@ func main() {
 		exportAll    = flag.String("export", envStr("EXPORT", ""), "run a scan, export the full report (scan.html + sbom/ + grype/) into this directory, and exit")
 		showVersion  = flag.Bool("version", false, "print version and exit")
 	)
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: artifactor [install|uninstall] [flags]\n\nSubcommands:\n  install      deploy the manifests to the cluster via kubectl (--dump prints them instead)\n  uninstall    remove the manifests from the cluster via kubectl (--dump prints them instead)\n\nFlags:\n")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 	log.SetPrefix("artifactor: ")
 	log.SetFlags(log.LstdFlags)

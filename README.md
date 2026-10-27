@@ -6,20 +6,21 @@ O resultado é apresentado em uma **SPA** que permite filtrar os CVEs pelos **no
 
 ## TL;DR;
 
-```
-$ make build
-$ make export
-$ xdg-open export/scan.html
-```
-
-
-O diretorio `export` contem o relatorio estatico e auto-contido do scan completo. Basta enviar ao cliente ou usar para analisar as imagens;
-Abaixo está a arvore de aquivos criadas com o scan apenas dos namespaces `flux-system` e `metallb-system`:
+Baixe o ultimo binário em [release](https://github.com/getupcloud/artifactor/releases) e execute o scan:
 
 ```
-$ ./bin/artifactor --namespace flux-system,metallb-system --export export
-$ tree export/
-export/
+$ tar xzvf artifactor_0.0.1_linux_arm64.tar.gz artifactor
+$ ./artifactor --export my-cluster
+$ xdg-open my-cluster/scan.html
+```
+
+O diretorio `my-cluster` é criado contendo o relatorio estatico e auto-contido do scan completo. Basta enviar ao cliente ou usar para analisar as imagens;
+Abaixo está a arvore de arquivos criadas com o scan apenas dos namespaces `flux-system` e `metallb-system`:
+
+```
+$ ./artifactor --namespace flux-system,metallb-system --export my-cluster
+$ tree my-cluster/
+my-cluster/
 ├── grype
 │   ├── ghcr.io_fluxcd_helm-controller_v1.1.0.grype.json
 │   ├── ghcr.io_fluxcd_image-automation-controller_v0.39.0.grype.json

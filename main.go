@@ -183,9 +183,7 @@ func runScanCmd(args []string) {
 
 	// 3. Grype vulnerability database: downloads on first run (can take a
 	//    while), so it runs in the background while the UI is already up.
-	dbDone := make(chan struct{})
 	go func() {
-		defer close(dbDone)
 		log.Printf("preparing grype vulnerability database at %s (first run downloads the DB) ...", *dbDir)
 		provider, status, dbErr := scanner.NewProvider(*dbDir, version, *dbUpdate)
 		dbMu.Lock()
@@ -208,8 +206,8 @@ func runScanCmd(args []string) {
 		}
 	}()
 
-	// 4. Scan loop: initial scan (after the DB attempt) + periodic rescans +
-	//    shutdown handling.
+	// 4. Scan loop: scans only start on demand (the "Scan now" button posts
+	//    to /api/scan) or via an explicitly configured --scan-interval.
 	runScan := func() {
 		if sc == nil {
 			return
@@ -224,12 +222,6 @@ func runScanCmd(args []string) {
 				log.Printf("scan run failed: %v", err)
 				store.SetDBError(err.Error())
 			}
-		}()
-	}
-	if k8sErr == nil {
-		go func() {
-			<-dbDone
-			runScan()
 		}()
 	}
 	var ticker *time.Ticker

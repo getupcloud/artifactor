@@ -1,6 +1,6 @@
 # Build, package and deploy the artifactor.
 
-VERSION    ?= 0.0.4
+VERSION    ?= 0.0.5
 IMAGE      ?= ghcr.io/getupcloud/artifactor:$(VERSION)
 REGISTRY   ?=
 NAMESPACE  ?= artifactor
@@ -12,7 +12,17 @@ else
 FULL_IMAGE := $(IMAGE)
 endif
 
+.ONESHELL:
 .PHONY: help build test vet fmt run export docker-build docker-push deploy undeploy port-forward logs tidy clean
+
+bump:
+	@read -p 'Next version: ' -e -i "$(VERSION)" NEXT_VERSION
+	echo $$NEXT_VERSION
+	if [ "$(VERSION)" == "$$NEXT_VERSION" ]; then
+		echo "Error: same version"
+		exit 1
+	fi
+	sed -i -e "/^VERSION /s|$(VERSION)|$$NEXT_VERSION|" Makefile
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'

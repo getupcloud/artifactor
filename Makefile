@@ -1,6 +1,6 @@
 # Build, package and deploy the artifactor.
 
-VERSION    ?= 0.0.6
+VERSION    ?= 0.0.7
 IMAGE      ?= ghcr.io/getupcloud/artifactor:$(VERSION)
 REGISTRY   ?=
 NAMESPACE  ?= artifactor
@@ -23,6 +23,7 @@ bump:
 		exit 1
 	fi
 	sed -i -e "/^VERSION /s|$(VERSION)|$$NEXT_VERSION|" Makefile
+	git commit -m "Bump version $$NEXT_VERSION" Makefile
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'

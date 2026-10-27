@@ -136,7 +136,7 @@ func TestInstallDump(t *testing.T) {
 		t.Error("uninstall --dump --image did not apply the override")
 	}
 
-	t.Setenv("REGISTRY_TOKEN", "tok123")
+	t.Setenv("GH_TOKEN", "tok123")
 	out = captureStdout(t, func() {
 		runInstallCmd("install", []string{"--dump", "--image-token-env"})
 	})
@@ -146,15 +146,45 @@ func TestInstallDump(t *testing.T) {
 	if !strings.Contains(out, "name: docker-ghcr") {
 		t.Error("install --dump --image-token-env missing docker-ghcr secret")
 	}
+	secretData, _ := dockerConfigSecretData("tok123")
+	if !strings.Contains(out, ".dockerconfigjson: "+secretData) {
+		t.Error("install --dump --image-token-env did not use GH_TOKEN")
+	}
+
+	// GH_TOKEN takes precedence over GITHUB_TOKEN
+	t.Setenv("GITHUB_TOKEN", "tok999")
+	out = captureStdout(t, func() {
+		runInstallCmd("install", []string{"--dump", "--image-token-env"})
+	})
+	if strings.Contains(out, ".dockerconfigjson: "+mustSecretData(t, "tok999")) {
+		t.Error("GITHUB_TOKEN overrode GH_TOKEN")
+	}
+
+	// falls back to GITHUB_TOKEN when GH_TOKEN is unset
+	os.Unsetenv("GH_TOKEN")
+	out = captureStdout(t, func() {
+		runInstallCmd("install", []string{"--dump", "--image-token-env"})
+	})
+	if !strings.Contains(out, ".dockerconfigjson: "+mustSecretData(t, "tok999")) {
+		t.Error("install --dump --image-token-env did not fall back to GITHUB_TOKEN")
+	}
 
 	t.Setenv("MY_TOKEN", "tok456")
 	out = captureStdout(t, func() {
 		runInstallCmd("install", []string{"--dump", "--image-token-env=MY_TOKEN"})
 	})
-	secretData, _ := dockerConfigSecretData("tok456")
-	if !strings.Contains(out, ".dockerconfigjson: "+secretData) {
+	if !strings.Contains(out, ".dockerconfigjson: "+mustSecretData(t, "tok456")) {
 		t.Error("install --dump --image-token-env=MY_TOKEN did not use MY_TOKEN")
 	}
+}
+
+func mustSecretData(t *testing.T, token string) string {
+	t.Helper()
+	s, err := dockerConfigSecretData(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
 
 func captureStdout(t *testing.T, fn func()) string {

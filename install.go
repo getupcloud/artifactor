@@ -28,7 +28,10 @@ var manifestsFS embed.FS
 const (
 	secretTemplateName = "imagepullsecret.yaml.tmpl"
 	secretPlaceholder  = "__TOKEN_BASE64__"
-	defaultTokenEnv    = "REGISTRY_TOKEN"
+	// Default environment variables read by --image-token-env (in order)
+	// when no explicit variable name is given.
+	defaultTokenEnvA = "GH_TOKEN"
+	defaultTokenEnvB = "GITHUB_TOKEN"
 )
 
 var deploymentImagePattern = regexp.MustCompile(`(?m)^(\s+image:\s*)\S+.*$`)
@@ -109,10 +112,10 @@ func runInstallCmd(action string, args []string) {
 	fs := flag.NewFlagSet("artifactor "+action, flag.ExitOnError)
 	dump := fs.Bool("dump", false, "only print the manifests to stdout without applying them")
 	image := fs.String("image", "", "override the container image in the deployment manifest")
-	imageTokenEnv := fs.String("image-token-env", "", "read a registry token from this environment variable and include the docker-ghcr imagePullSecret manifest")
-	fs.Lookup("image-token-env").NoOptDefVal = defaultTokenEnv
+	imageTokenEnv := fs.String("image-token-env", "", "read a registry token from this environment variable (default: GH_TOKEN, then GITHUB_TOKEN) and include the docker-ghcr imagePullSecret manifest")
+	fs.Lookup("image-token-env").NoOptDefVal = "auto"
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: artifactor %s [--dump] [--image <ref>] [--image-token-env[=%s]]\n", action, defaultTokenEnv)
+		fmt.Fprintf(os.Stderr, "Usage: artifactor %s [--dump] [--image <ref>] [--image-token-env[=VAR]]\n", action)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -121,9 +124,19 @@ func runInstallCmd(action string, args []string) {
 
 	secretData := ""
 	if *imageTokenEnv != "" {
-		token := os.Getenv(*imageTokenEnv)
+		envNames := []string{*imageTokenEnv}
+		if *imageTokenEnv == "auto" {
+			envNames = []string{defaultTokenEnvA, defaultTokenEnvB}
+		}
+		token := ""
+		for _, name := range envNames {
+			if v := os.Getenv(name); v != "" {
+				token = v
+				break
+			}
+		}
 		if token == "" {
-			log.Fatalf("%s: environment variable %s is empty or unset (needed for --image-token-env)", action, *imageTokenEnv)
+			log.Fatalf("%s: none of the environment variables %s is set (needed for --image-token-env)", action, strings.Join(envNames, ", "))
 		}
 		s, err := dockerConfigSecretData(token)
 		if err != nil {

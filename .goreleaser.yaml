@@ -38,7 +38,9 @@ dockers_v2:
     tags:
       - "{{ .Version }}"
       - "{{ .ShortCommit }}"
-      - latest
+      # :latest only when IS_LATEST=true (set by the workflows when this
+      # build is the newest version); empty tags are ignored otherwise
+      - '{{ if eq .Env.IS_LATEST "true" }}latest{{ end }}'
     platforms:
       - linux/amd64
       - linux/arm64

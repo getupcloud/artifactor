@@ -142,7 +142,7 @@ Os workflows autenticam no ghcr.io preferindo o secret **`GHCR_PAT`** (PAT com s
 
 ## Release
 
-O workflow `release` (disparado manualmente na aba **Actions**) lê a variável `VERSION` do Makefile, **falha se a tag `v<VERSION>` já existir** (local ou remoto), cria e publica a tag e roda o GoReleaser: imagens multi-arch no ghcr.io (`:<VERSION>`, `:<sha>` e `:latest`) + GitHub Release com os binários. Para lançar uma nova versão, edite `VERSION` no Makefile e dispare o workflow.
+O workflow `release` (disparado manualmente na aba **Actions**) lê a variável `VERSION` do Makefile, **falha se a tag `v<VERSION>` já existir** (local ou remoto), cria e publica a tag e roda o GoReleaser: imagens multi-arch no ghcr.io (`:<VERSION>` e `:<sha>` sempre; **`:latest` apenas quando a versão é a mais nova** entre as tags `v*`) + GitHub Release com os binários. Para lançar uma nova versão, edite `VERSION` no Makefile e dispare o workflow.
 
 ## RBAC
 

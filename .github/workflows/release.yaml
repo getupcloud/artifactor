@@ -56,6 +56,19 @@ jobs:
           git tag "v${VERSION}"
           git push origin "v${VERSION}"
 
+      # The image gets the :latest tag only when this release is the newest
+      # version (highest v* tag).
+      - name: Check if this is the latest version
+        id: latest
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          HIGHEST=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          if [ "$HIGHEST" = "v${VERSION}" ]; then
+            echo "is_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -85,3 +98,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
+          IS_LATEST: ${{ steps.latest.outputs.is_latest }}

@@ -27,6 +27,7 @@ import (
 	"github.com/anchore/syft/syft/format"
 	"github.com/anchore/syft/syft/sbom"
 
+	"github.com/getupcloud/artifactor/internal/ecr"
 	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/registryauth"
 )
@@ -258,6 +259,7 @@ type Options struct {
 	Client      *k8s.Client
 	Namespaces  []string               // restrict scanning to these namespaces (empty = all)
 	Provider    vulnerability.Provider // initial grype vulnerability DB provider (may be nil; set later via SetProvider)
+	ECR         *ecr.Provider          // AWS ECR credential provider via the AWS chain/IRSA (nil disables)
 	Platform    string
 	Timeout     time.Duration
 	Concurrency int
@@ -382,6 +384,24 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 		}
 	}
 	credentials := registryauth.CredentialsFor(merged, imageRef)
+
+	// AWS ECR images are usually pulled by the kubelet with node IAM roles
+	// (no pod imagePullSecret). When no pull-secret credential matched, fall
+	// back to the AWS credential chain (IRSA/pod identity) to mint a fresh
+	// registry token.
+	if len(credentials) == 0 && s.opts.ECR != nil {
+		if authority := registryauth.AuthorityForImage(imageRef); ecr.IsECRRegistry(authority) {
+			if username, password, err := s.opts.ECR.Credentials(ctx, authority); err != nil {
+				s.logger.Printf("ecr credentials for %s: %v", authority, err)
+			} else {
+				credentials = append(credentials, image.RegistryCredentials{
+					Authority: authority,
+					Username:  username,
+					Password:  password,
+				})
+			}
+		}
+	}
 
 	// 1. syft: generate the SBOM (pulls the image from its registry using
 	//    the credentials above).

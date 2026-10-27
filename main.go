@@ -24,6 +24,7 @@ import (
 	flag "github.com/spf13/pflag" // flags defined and displayed with --
 
 	"github.com/getupcloud/artifactor/internal/api"
+	"github.com/getupcloud/artifactor/internal/ecr"
 	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/scanner"
 )
@@ -86,6 +87,7 @@ func runScanCmd(args []string) {
 		exportSBOM   = fs.String("export-sbom", envStr("EXPORT_SBOM", ""), "run a scan, export one syft SBOM (syft-json) per image into this directory, and exit")
 		exportGrype  = fs.String("export-grype", envStr("EXPORT_GRYPE", ""), "run a scan, export one grype JSON report per image into this directory, and exit")
 		exportAll    = fs.String("export", envStr("EXPORT", ""), "run a scan, export the full report (scan.html + sbom/ + grype/) into this directory, and exit")
+		ecrAuth      = fs.Bool("ecr-auth", envBool("ECR_AUTH", true), "authenticate to AWS ECR registries via the AWS credential chain (IRSA) when no pull secret matches")
 		showVersion  = fs.Bool("version", false, "print version and exit")
 	)
 	fs.Usage = func() {
@@ -114,7 +116,7 @@ func runScanCmd(args []string) {
 			sbomDir:  *exportSBOM,
 			grypeDir: *exportGrype,
 			allDir:   *exportAll,
-		}, *dbDir, *dbUpdate, namespaces, *platform, *scanTimeout, *concurrency)
+		}, *dbDir, *dbUpdate, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth)
 		if err != nil {
 			log.Fatalf("export: %v", err)
 		}
@@ -132,11 +134,16 @@ func runScanCmd(args []string) {
 	// 2. Scanner + result store + HTTP API (served immediately; the
 	//    vulnerability DB initializes in the background below).
 	store := scanner.NewStore()
+	var ecrProvider *ecr.Provider
+	if *ecrAuth {
+		ecrProvider = ecr.NewProvider()
+	}
 	var sc *scanner.Scanner
 	if k8sClient != nil {
 		sc = scanner.New(scanner.Options{
 			Client:      k8sClient,
 			Namespaces:  namespaces,
+			ECR:         ecrProvider,
 			Platform:    *platform,
 			Timeout:     *scanTimeout,
 			Concurrency: *concurrency,
@@ -255,7 +262,7 @@ type exportRequest struct {
 
 // runExport implements the --export* flags: prepare the DB, scan every image
 // once, write the requested artifacts, and exit.
-func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, namespaces []string, platform string, scanTimeout time.Duration, concurrency int) error {
+func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth bool) error {
 	k8sClient, mode, k8sErr := k8s.New()
 	if k8sErr != nil {
 		return fmt.Errorf("no cluster access: %w", k8sErr)
@@ -272,10 +279,15 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 	if dbStatus.Error != "" {
 		store.SetDBError(dbStatus.Error)
 	}
+	var ecrProvider *ecr.Provider
+	if ecrAuth {
+		ecrProvider = ecr.NewProvider()
+	}
 	sc := scanner.New(scanner.Options{
 		Client:      k8sClient,
 		Namespaces:  namespaces,
 		Provider:    provider,
+		ECR:         ecrProvider,
 		Platform:    platform,
 		Timeout:     scanTimeout,
 		Concurrency: concurrency,

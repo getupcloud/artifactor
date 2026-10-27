@@ -184,7 +184,9 @@ func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	image := q.Get("image")
 	namespace := q.Get("namespace")
-	idFilter := strings.ToLower(strings.TrimSpace(q.Get("id")))
+	// multiple CVE IDs separated by spaces: a row matches when it contains
+	// any of the tokens
+	idFilters := strings.Fields(strings.ToLower(q.Get("id")))
 	artifactFilter := scanner.PackageNameFilter(q.Get("artifact"))
 	fixedOnly := q.Get("fixed") == "1"
 
@@ -219,7 +221,7 @@ func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 		if !artifactFilter(row.PackageName) {
 			continue
 		}
-		if idFilter != "" && !strings.Contains(strings.ToLower(row.ID), idFilter) {
+		if len(idFilters) > 0 && !matchesAnyID(row.ID, idFilters) {
 			continue
 		}
 		if fixedOnly && len(row.FixedIn) == 0 {
@@ -231,6 +233,18 @@ func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// matchesAnyID reports whether the CVE ID contains any of the given
+// case-insensitive tokens.
+func matchesAnyID(id string, tokens []string) bool {
+	id = strings.ToLower(id)
+	for _, token := range tokens {
+		if strings.Contains(id, token) {
+			return true
+		}
+	}
+	return false
 }
 
 // rowRunsInNamespace reports whether the row's own image runs in the given

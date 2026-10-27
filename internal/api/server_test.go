@@ -210,6 +210,31 @@ func TestNamespaceEndpointAndFilter(t *testing.T) {
 	}
 }
 
+func TestCVEMultipleIDFilter(t *testing.T) {
+	srv, _ := testServer(t)
+	// two IDs separated by spaces (URL-encoded as +): OR semantics
+	rows := getJSON(t, srv.Handler(), "/api/cves?id=CVE-2024-0001+CVE-2023-9999")
+	if len(rows) != 2 {
+		t.Fatalf("multi-id rows = %d, want 2", len(rows))
+	}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		seen[r["id"].(string)] = true
+	}
+	if !seen["CVE-2024-0001"] || !seen["CVE-2023-9999"] {
+		t.Fatalf("multi-id rows = %v", rows)
+	}
+	// substring matching still works per token
+	rows = getJSON(t, srv.Handler(), "/api/cves?id=CVE-2024-0001+CVE-2024-9999")
+	if len(rows) != 1 || rows[0]["id"] != "CVE-2024-0001" {
+		t.Fatalf("partial-token rows = %v", rows)
+	}
+	// whitespace-only input behaves like no filter
+	if rows := getJSON(t, srv.Handler(), "/api/cves?id=+++"); len(rows) != 4 {
+		t.Fatalf("blank id rows = %d, want 4", len(rows))
+	}
+}
+
 func TestCVEImagesList(t *testing.T) {
 	srv, _ := testServer(t)
 	rows := getJSON(t, srv.Handler(), "/api/cves")

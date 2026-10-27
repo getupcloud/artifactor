@@ -204,8 +204,8 @@ tr.expand-row:hover td { background: var(--bg); }
         <input type="search" id="artifact-filter" list="artifact-list" placeholder="e.g. openssl, libc…">
         <datalist id="artifact-list"></datalist>
       </label>
-      <label>CVE ID
-        <input type="text" id="cve-filter" placeholder="e.g. CVE-2024-…">
+      <label title="Multiple IDs separated by spaces match any of them">CVE IDs
+        <input type="text" id="cve-filter" placeholder="e.g. CVE-2024-… CVE-2025-…">
       </label>
       <label class="cb" title="Show only CVEs that have a fixed version available">
         <input type="checkbox" id="fixed-filter">
@@ -254,7 +254,8 @@ function snapshotFilterCVEs(params) {
   const image = params.get("image") || "";
   const namespace = params.get("namespace") || "";
   const artifact = (params.get("artifact") || "").toLowerCase();
-  const id = (params.get("id") || "").toLowerCase();
+  // multiple CVE IDs separated by spaces: match when any token is contained
+  const idTokens = (params.get("id") || "").toLowerCase().split(/\s+/).filter(Boolean);
   const sevs = (params.get("severity") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const excluded = (params.get("exclude") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const fixedOnly = params.get("fixed") === "1";
@@ -262,7 +263,7 @@ function snapshotFilterCVEs(params) {
     (!image || c.image === image) &&
     (!namespace || (c.images || []).some((ref) => ref.image === c.image && ref.namespace === namespace)) &&
     (!artifact || (c.package || "").toLowerCase().includes(artifact)) &&
-    (!id || (c.id || "").toLowerCase().includes(id)) &&
+    (!idTokens.length || idTokens.some((t) => (c.id || "").toLowerCase().includes(t))) &&
     (!sevs.length || sevs.includes(c.severity)) &&
     (!excluded.length || !excluded.includes(c.severity)) &&
     (!fixedOnly || (c.fixedIn && c.fixedIn.length > 0))

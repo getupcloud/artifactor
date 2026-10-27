@@ -101,7 +101,7 @@ func TestRenderManifestsWithSecret(t *testing.T) {
 	text := string(data)
 	for _, want := range []string{
 		"kind: Secret",
-		"name: docker-ghcr",
+		"name: artifactor-docker-image-token",
 		"type: kubernetes.io/dockerconfigjson",
 		".dockerconfigjson: " + secretData,
 	} {
@@ -143,8 +143,8 @@ func TestInstallDump(t *testing.T) {
 	if !strings.Contains(out, "kind: Secret") {
 		t.Error("install --dump --image-token-env did not include the secret")
 	}
-	if !strings.Contains(out, "name: docker-ghcr") {
-		t.Error("install --dump --image-token-env missing docker-ghcr secret")
+	if !strings.Contains(out, "name: artifactor-docker-image-token") {
+		t.Error("install --dump --image-token-env missing artifactor-docker-image-token secret")
 	}
 	secretData, _ := dockerConfigSecretData("tok123")
 	if !strings.Contains(out, ".dockerconfigjson: "+secretData) {

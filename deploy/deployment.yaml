@@ -21,12 +21,12 @@ spec:
         runAsUser: 65532
         seccompProfile:
           type: RuntimeDefault
+      imagePullSecrets:
+        - name: artifactor-docker-image-token
       containers:
         - name: scanner
           image: ghcr.io/getupcloud/artifactor:0.0.1 # build with `make docker-build` and set your tag
           imagePullPolicy: IfNotPresent
-          imagePullSecrets:
-          - name: docker-ghcr
           ports:
             - name: http
               containerPort: 8080

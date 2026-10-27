@@ -112,7 +112,7 @@ func runInstallCmd(action string, args []string) {
 	fs := flag.NewFlagSet("artifactor "+action, flag.ExitOnError)
 	dump := fs.Bool("dump", false, "only print the manifests to stdout without applying them")
 	image := fs.String("image", "", "override the container image in the deployment manifest")
-	imageTokenEnv := fs.String("image-token-env", "", "read a registry token from this environment variable (default: GH_TOKEN, then GITHUB_TOKEN) and include the docker-ghcr imagePullSecret manifest")
+	imageTokenEnv := fs.String("image-token-env", "", "read a registry token from this environment variable (default: GH_TOKEN, then GITHUB_TOKEN) and include the artifactor-docker-image-token imagePullSecret manifest")
 	fs.Lookup("image-token-env").NoOptDefVal = "auto"
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: artifactor %s [--dump] [--image <ref>] [--image-token-env[=VAR]]\n", action)

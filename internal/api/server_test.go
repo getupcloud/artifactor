@@ -210,6 +210,38 @@ func TestNamespaceEndpointAndFilter(t *testing.T) {
 	}
 }
 
+func TestNamedVulnsEndpoint(t *testing.T) {
+	srv, _ := testServer(t)
+	groups := getJSON(t, srv.Handler(), "/api/named-vulns")
+	if len(groups) != 4 {
+		t.Fatalf("named vulns = %d entries, want 4", len(groups))
+	}
+	if groups[0]["key"] != "php2shell" || groups[0]["label"] != "PHP2Shell" {
+		t.Errorf("first group = %v", groups[0])
+	}
+	php := groups[0]["cves"].([]any)
+	if len(php) != 3 {
+		t.Errorf("php2shell cves = %v, want 3", php)
+	}
+}
+
+func TestNamedVulnFilter(t *testing.T) {
+	srv, _ := testServer(t)
+	// fixture has no named CVEs: selecting one yields no rows
+	if rows := getJSON(t, srv.Handler(), "/api/cves?named=log4shell"); len(rows) != 0 {
+		t.Fatalf("named=log4shell rows = %d, want 0", len(rows))
+	}
+	// OR-combined with typed IDs: the typed ID still matches
+	rows := getJSON(t, srv.Handler(), "/api/cves?id=CVE-2024-0001&named=log4shell")
+	if len(rows) != 1 || rows[0]["id"] != "CVE-2024-0001" {
+		t.Fatalf("id+named rows = %v", rows)
+	}
+	// unknown named key is ignored (no filter)
+	if rows := getJSON(t, srv.Handler(), "/api/cves?named=bogus"); len(rows) != 4 {
+		t.Fatalf("named=bogus rows = %d, want 4", len(rows))
+	}
+}
+
 func TestCVEMultipleIDFilter(t *testing.T) {
 	srv, _ := testServer(t)
 	// two IDs separated by spaces (URL-encoded as +): OR semantics
@@ -317,6 +349,7 @@ func TestExportEndpoint(t *testing.T) {
 		Images      []map[string]any `json:"images"`
 		Cves        []map[string]any `json:"cves"`
 		Namespaces  []string         `json:"namespaces"`
+		NamedVulns  []map[string]any `json:"namedVulns"`
 	}
 	if err := json.Unmarshal([]byte(body[i+len(prefix):i+j]), &snap); err != nil {
 		t.Fatalf("snapshot JSON invalid: %v", err)
@@ -329,6 +362,9 @@ func TestExportEndpoint(t *testing.T) {
 	}
 	if len(snap.Namespaces) != 3 {
 		t.Errorf("snapshot namespaces = %v, want 3", snap.Namespaces)
+	}
+	if len(snap.NamedVulns) != 4 {
+		t.Errorf("snapshot namedVulns = %v, want 4", snap.NamedVulns)
 	}
 	if snap.GeneratedAt == "" {
 		t.Error("snapshot missing generatedAt")

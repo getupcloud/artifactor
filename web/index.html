@@ -207,6 +207,11 @@ tr.expand-row:hover td { background: var(--bg); }
       <label title="Multiple IDs separated by spaces match any of them">CVE IDs
         <input type="text" id="cve-filter" placeholder="e.g. CVE-2024-… CVE-2025-…">
       </label>
+      <label title="Well-known vulnerability families">Named vulnerabilities
+        <select id="named-vuln-filter">
+          <option value="">None</option>
+        </select>
+      </label>
       <label class="cb" title="Show only CVEs that have a fixed version available">
         <input type="checkbox" id="fixed-filter">
         Only CVEs with fix
@@ -254,8 +259,14 @@ function snapshotFilterCVEs(params) {
   const image = params.get("image") || "";
   const namespace = params.get("namespace") || "";
   const artifact = (params.get("artifact") || "").toLowerCase();
-  // multiple CVE IDs separated by spaces: match when any token is contained
+  // multiple CVE IDs separated by spaces: match when any token is contained.
+  // A named vulnerability group expands to its CVE IDs (OR-combined).
   const idTokens = (params.get("id") || "").toLowerCase().split(/\s+/).filter(Boolean);
+  const namedKey = params.get("named") || "";
+  if (namedKey && SNAPSHOT.namedVulns) {
+    const group = SNAPSHOT.namedVulns.find((v) => v.key === namedKey);
+    if (group) idTokens.push(...(group.cves || []).map((i) => i.toLowerCase()));
+  }
   const sevs = (params.get("severity") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const excluded = (params.get("exclude") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const fixedOnly = params.get("fixed") === "1";
@@ -287,6 +298,8 @@ function snapshotAPI(path) {
       return Promise.resolve(snapshotFilterCVEs(url.searchParams));
     case "/api/namespaces":
       return Promise.resolve(SNAPSHOT.namespaces || []);
+    case "/api/named-vulns":
+      return Promise.resolve(SNAPSHOT.namedVulns || []);
     case "/api/artifacts": {
       const image = url.searchParams.get("image") || "";
       const q = (url.searchParams.get("q") || "").toLowerCase();
@@ -398,6 +411,8 @@ async function loadCVEs() {
   if (artifact) params.set("artifact", artifact);
   const cveId = $("cve-filter").value.trim();
   if (cveId) params.set("id", cveId);
+  const named = $("named-vuln-filter").value;
+  if (named) params.set("named", named);
   const ns = $("namespace-filter").value;
   if (ns) params.set("namespace", ns);
   if ($("fixed-filter").checked) params.set("fixed", "1");
@@ -588,6 +603,7 @@ $("artifact-filter").oninput = () => {
 $("cve-filter").oninput = () => { clearTimeout(debounce); debounce = setTimeout(loadCVEs, 250); };
 $("fixed-filter").onchange = loadCVEs;
 $("namespace-filter").onchange = loadCVEs;
+$("named-vuln-filter").onchange = loadCVEs;
 
 for (const el of document.querySelectorAll(".stat.sev")) {
   el.onclick = () => {
@@ -616,6 +632,7 @@ $("clear-btn").onclick = () => {
   $("cve-filter").value = "";
   $("fixed-filter").checked = false;
   $("namespace-filter").value = "";
+  $("named-vuln-filter").value = "";
   state.sevFilter.clear();
   document.querySelectorAll(".stat.sev").forEach((el) => el.classList.remove("off"));
   state.statusFilter.clear();
@@ -624,6 +641,24 @@ $("clear-btn").onclick = () => {
   loadCVEs();
   loadArtifacts();
 };
+
+/* ---------- named vulnerabilities selector ---------- */
+
+async function loadNamedVulns() {
+  let groups;
+  try { groups = await api("/api/named-vulns"); }
+  catch { return; }
+  const sel = $("named-vuln-filter");
+  const current = sel.value;
+  sel.innerHTML = '<option value="">None</option>';
+  for (const g of groups) {
+    const opt = document.createElement("option");
+    opt.value = g.key;
+    opt.textContent = g.label + " (" + (g.cves || []).join(", ") + ")";
+    sel.appendChild(opt);
+  }
+  sel.value = groups.some((g) => g.key === current) ? current : "";
+}
 
 /* ---------- namespace selector ---------- */
 
@@ -670,6 +705,8 @@ if (SNAPSHOT) {
 
 poll();
 loadArtifacts();
+loadNamedVulns();
+loadNamespaces().catch(() => {});
 if (!SNAPSHOT) setInterval(poll, 8000);
 </script>
 </body>

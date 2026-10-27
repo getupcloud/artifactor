@@ -19,6 +19,37 @@ import (
 // exportMarker is replaced with the embedded data snapshot when exporting.
 const exportMarker = "<!-- EXPORT_DATA -->"
 
+// namedVuln is a well-known vulnerability family exposed in the SPA's
+// "Named vulnerabilities" selector.
+type namedVuln struct {
+	Key   string   `json:"key"`
+	Label string   `json:"label"`
+	CVEs  []string `json:"cves"`
+}
+
+// namedVulnerabilities are the selectable well-known vulnerability groups.
+var namedVulnerabilities = []namedVuln{
+	{Key: "php2shell", Label: "PHP2Shell", CVEs: []string{"CVE-2026-109618", "CVE-2026-109619", "CVE-2026-115560"}},
+	{Key: "http2shell", Label: "HTTP2Shell/Node2Shell/Broccoli2Shell/Python2Shell", CVEs: []string{"CVE-2026-111497"}},
+	{Key: "react2shell", Label: "React2Shell", CVEs: []string{"CVE-2025-55182", "CVE-2025-66478"}},
+	{Key: "log4shell", Label: "Log4Shell", CVEs: []string{"CVE-2021-44228"}},
+}
+
+// namedIDTokens returns the CVE IDs of a named vulnerability group (lower
+// case), or nil for unknown keys.
+func namedIDTokens(key string) []string {
+	for _, v := range namedVulnerabilities {
+		if v.Key == key {
+			out := make([]string, 0, len(v.CVEs))
+			for _, id := range v.CVEs {
+				out = append(out, strings.ToLower(id))
+			}
+			return out
+		}
+	}
+	return nil
+}
+
 // Options wires the API server to the scan store and scan trigger.
 type Options struct {
 	Store   *scanner.Store
@@ -45,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/images", s.handleImages)
 	mux.HandleFunc("GET /api/cves", s.handleCVEs)
+	mux.HandleFunc("GET /api/named-vulns", s.handleNamedVulns)
 	mux.HandleFunc("GET /api/namespaces", s.handleNamespaces)
 	mux.HandleFunc("GET /api/artifacts", s.handleArtifacts)
 	mux.HandleFunc("GET /api/export", s.handleExport)
@@ -185,8 +217,10 @@ func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 	image := q.Get("image")
 	namespace := q.Get("namespace")
 	// multiple CVE IDs separated by spaces: a row matches when it contains
-	// any of the tokens
+	// any of the tokens. A named vulnerability group (named=) expands to its
+	// CVE IDs and is OR-combined with the typed tokens.
 	idFilters := strings.Fields(strings.ToLower(q.Get("id")))
+	idFilters = append(idFilters, namedIDTokens(q.Get("named"))...)
 	artifactFilter := scanner.PackageNameFilter(q.Get("artifact"))
 	fixedOnly := q.Get("fixed") == "1"
 
@@ -277,6 +311,12 @@ func (s *Server) namespaceNames() []string {
 	return out
 }
 
+// GET /api/named-vulns returns the well-known vulnerability groups for the
+// SPA's "Named vulnerabilities" selector.
+func (s *Server) handleNamedVulns(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, namedVulnerabilities)
+}
+
 // GET /api/namespaces returns the distinct namespaces of the workloads
 // running scanned images (feeds the SPA's namespace selector).
 func (s *Server) handleNamespaces(w http.ResponseWriter, r *http.Request) {
@@ -320,6 +360,7 @@ type exportSnapshot struct {
 	Images           []scanner.Summary   `json:"images"`
 	Cves             []cveOut            `json:"cves"`
 	Namespaces       []string            `json:"namespaces"`
+	NamedVulns       []namedVuln         `json:"namedVulns"`
 	Artifacts        []string            `json:"artifacts"`
 	ArtifactsByImage map[string][]string `json:"artifactsByImage"`
 }
@@ -339,6 +380,7 @@ func (s *Server) buildSnapshot() exportSnapshot {
 		Images:           s.opts.Store.Summaries(),
 		Cves:             s.cveRows(),
 		Namespaces:       s.namespaceNames(),
+		NamedVulns:       namedVulnerabilities,
 		Artifacts:        s.artifactNames("", ""),
 		ArtifactsByImage: byImage,
 	}

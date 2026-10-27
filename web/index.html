@@ -59,8 +59,8 @@ button.secondary { background: var(--panel2); border: 1px solid var(--border); c
 }
 .stat .n { font-size: 20px; font-weight: 700; }
 .stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-.stat.sev { cursor: pointer; user-select: none; border-color: transparent; }
-.stat.sev.off { opacity: .35; }
+.stat.sev, .stat.status { cursor: pointer; user-select: none; border-color: transparent; }
+.stat.off { opacity: .35; }
 .stat.sev .n.critical { color: var(--critical); }
 .stat.sev .n.high { color: var(--high); }
 .stat.sev .n.medium { color: var(--medium); }
@@ -178,8 +178,9 @@ tr.expand-row:hover td { background: var(--bg); }
 
 <div class="stats" id="stats">
   <div class="stat"><div class="n" id="stat-images">0</div><div class="l">Images</div></div>
-  <div class="stat"><div class="n" id="stat-scanned">0</div><div class="l">Scanned</div></div>
-  <div class="stat"><div class="n" id="stat-errors">0</div><div class="l">Errors</div></div>
+  <div class="stat status" data-status="scanned" title="Show/hide scanned images"><div class="n" id="stat-scanned">0</div><div class="l">Scanned</div></div>
+  <div class="stat status" data-status="error" title="Show/hide images with errors"><div class="n" id="stat-errors">0</div><div class="l">Errors</div></div>
+  <div class="stat status" data-status="scanning" title="Show/hide images being scanned"><div class="n" id="stat-scanning">0</div><div class="l">Scanning</div></div>
   <div class="stat"><div class="n" id="stat-cves">0</div><div class="l">Total CVEs</div></div>
   <div class="stat sev" data-sev="critical"><div class="n critical" id="stat-critical">0</div><div class="l">Critical</div></div>
   <div class="stat sev" data-sev="high"><div class="n high" id="stat-high">0</div><div class="l">High</div></div>
@@ -302,6 +303,7 @@ const state = {
   images: [],          // /api/images summaries
   selected: "",        // "" = all images
   sevFilter: new Set(),// severities turned OFF (chips start all "on")
+  statusFilter: new Set(), // image statuses hidden from the list (chips start all "on")
   status: null,
   imageSearch: "",
   lastQuery: null,     // /api/cves query string of the last render
@@ -344,17 +346,19 @@ async function refreshStatus() {
 
 async function refreshImages() {
   state.images = await api("/api/images");
-  let scanned = 0, errors = 0, cves = 0;
+  let scanned = 0, errors = 0, scanning = 0, cves = 0;
   const sev = Object.fromEntries(SEVS.map((s) => [s, 0]));
   for (const img of state.images) {
     if (img.status === "scanned") scanned++;
     if (img.status === "error") errors++;
+    if (img.status === "scanning") scanning++;
     cves += img.cveCount || 0;
     for (const s of SEVS) sev[s] += (img.severities || {})[s] || 0;
   }
   $("stat-images").textContent = state.images.length;
   $("stat-scanned").textContent = scanned;
   $("stat-errors").textContent = errors;
+  $("stat-scanning").textContent = scanning;
   $("stat-cves").textContent = cves;
   for (const s of SEVS) $("stat-" + s).textContent = sev[s];
   renderImageList();
@@ -362,14 +366,15 @@ async function refreshImages() {
 
 function renderImageList() {
   const q = state.imageSearch.toLowerCase();
+  const visible = state.images.filter((img) => !state.statusFilter.has(img.status));
   const list = $("imglist");
   list.innerHTML = "";
   const allRow = document.createElement("div");
   allRow.className = "imgrow" + (state.selected === "" ? " active" : "");
-  allRow.innerHTML = '<span class="dot queued"></span><span class="name">All images</span><span class="count">' + state.images.length + "</span>";
+  allRow.innerHTML = '<span class="dot queued"></span><span class="name">All images</span><span class="count">' + visible.length + "</span>";
   allRow.onclick = () => { state.selected = ""; renderImageList(); loadCVEs(); loadArtifacts(); };
   list.appendChild(allRow);
-  for (const img of state.images) {
+  for (const img of visible) {
     if (q && !img.image.toLowerCase().includes(q)) continue;
     const row = document.createElement("div");
     row.className = "imgrow" + (state.selected === img.image ? " active" : "");
@@ -593,6 +598,18 @@ for (const el of document.querySelectorAll(".stat.sev")) {
   };
 }
 
+// Scanned / Errors / Scanning chips toggle the visibility of those image
+// statuses in the sidebar list (all start "on").
+for (const el of document.querySelectorAll(".stat.status")) {
+  el.onclick = () => {
+    const status = el.dataset.status;
+    if (state.statusFilter.has(status)) state.statusFilter.delete(status);
+    else state.statusFilter.add(status);
+    el.classList.toggle("off", state.statusFilter.has(status));
+    renderImageList();
+  };
+}
+
 $("clear-btn").onclick = () => {
   $("artifact-filter").value = "";
   $("cve-filter").value = "";
@@ -600,6 +617,9 @@ $("clear-btn").onclick = () => {
   $("namespace-filter").value = "";
   state.sevFilter.clear();
   document.querySelectorAll(".stat.sev").forEach((el) => el.classList.remove("off"));
+  state.statusFilter.clear();
+  document.querySelectorAll(".stat.status").forEach((el) => el.classList.remove("off"));
+  renderImageList();
   loadCVEs();
   loadArtifacts();
 };

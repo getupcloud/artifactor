@@ -34,6 +34,10 @@ func TestRenderManifests(t *testing.T) {
 	if got := strings.Count(text, "\n---\n"); got != 6 {
 		t.Errorf("separator count = %d, want 6", got)
 	}
+	// the namespace must be the first manifest
+	if strings.Index(text, "kind: Namespace") != strings.Index(text, "kind: ") {
+		t.Error("namespace manifest must be rendered first")
+	}
 }
 
 func TestRenderManifestsImageOverride(t *testing.T) {
@@ -109,9 +113,12 @@ func TestRenderManifestsWithSecret(t *testing.T) {
 			t.Errorf("secret manifest missing %q", want)
 		}
 	}
-	// the secret must come before the deployment that references it
-	if strings.Index(text, "kind: Secret") > strings.Index(text, "kind: Deployment") {
-		t.Error("secret manifest must be rendered before the deployment")
+	// order: namespace first, then the secret, then the deployment
+	nsIdx := strings.Index(text, "kind: Namespace")
+	secretIdx := strings.Index(text, "kind: Secret")
+	deployIdx := strings.Index(text, "kind: Deployment")
+	if !(nsIdx < secretIdx && secretIdx < deployIdx) {
+		t.Errorf("manifest order wrong: namespace=%d secret=%d deployment=%d", nsIdx, secretIdx, deployIdx)
 	}
 	if got := strings.Count(text, "\n---\n"); got != 7 {
 		t.Errorf("separator count = %d, want 7 (with secret)", got)

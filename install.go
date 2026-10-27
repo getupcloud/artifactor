@@ -36,6 +36,20 @@ const (
 
 var deploymentImagePattern = regexp.MustCompile(`(?m)^(\s+image:\s*)\S+.*$`)
 
+// manifestRank defines the rendering order: the namespace first, then the
+// imagePullSecret template (so the secret exists before the deployment that
+// references it), then the remaining manifests alphabetically.
+func manifestRank(name string) int {
+	switch name {
+	case "namespace.yaml":
+		return 0
+	case secretTemplateName:
+		return 1
+	default:
+		return 2
+	}
+}
+
 // dockerConfigSecretData builds the base64-encoded .dockerconfigjson payload
 // for the imagePullSecret. A token of the form "user:token" keeps the user
 // part; otherwise the user defaults to "gh" (any value works with a PAT on
@@ -68,13 +82,7 @@ func renderManifests(image, secretData string) ([]byte, error) {
 		return nil, err
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		ri, rj := 1, 1
-		if entries[i].Name() == secretTemplateName {
-			ri = 0
-		}
-		if entries[j].Name() == secretTemplateName {
-			rj = 0
-		}
+		ri, rj := manifestRank(entries[i].Name()), manifestRank(entries[j].Name())
 		if ri != rj {
 			return ri < rj
 		}

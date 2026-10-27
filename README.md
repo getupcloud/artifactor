@@ -130,6 +130,15 @@ Para usar sua própria imagem, ajuste `deploy/deployment.yaml` ou:
 kubectl -n artifactor set image deployment/artifactor scanner=ghcr.io/getupcloud/artifactor:0.0.1
 ```
 
+## Publicação no ghcr.io (tokens)
+
+Os workflows autenticam no ghcr.io preferindo o secret **`GHCR_PAT`** (PAT com scope `write:packages`) e usando `GITHUB_TOKEN` como fallback. Se o push falhar com `denied: permission_denied: read_package` usando o `GITHUB_TOKEN`, uma destas opções resolve:
+
+1. **Adicionar o secret `GHCR_PAT`** no repositório (recomendado — mesmo PAT do imagePullSecret `docker-ghcr`, desde que tenha `write:packages`).
+2. **Vincular o pacote ao repositório**: GitHub → conta/org `getupcloud` → *Packages* → `artifactor` → *Package settings* → *Manage Actions access* → adicionar o repo com papel *Write*.
+3. **Recriar o pacote com Actions**: se o pacote foi criado por push local com outro token, apague-o no UI do ghcr.io e deixe o workflow recriá-lo.
+4. Habilitar, na org, *Packages* → permissões de criação/accesso para GitHub Actions.
+
 ## Release
 
 O workflow `release` (disparado manualmente na aba **Actions**) lê a variável `VERSION` do Makefile, **falha se a tag `v<VERSION>` já existir** (local ou remoto), cria e publica a tag e roda o GoReleaser: imagens multi-arch no ghcr.io (`:<VERSION>`, `:<sha>` e `:latest`) + GitHub Release com os binários. Para lançar uma nova versão, edite `VERSION` no Makefile e dispare o workflow.

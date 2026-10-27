@@ -1,6 +1,6 @@
 # Build, package and deploy the artifactor.
 
-VERSION    ?= 0.0.3
+VERSION    ?= 0.0.4
 IMAGE      ?= ghcr.io/getupcloud/artifactor:$(VERSION)
 REGISTRY   ?=
 NAMESPACE  ?= artifactor

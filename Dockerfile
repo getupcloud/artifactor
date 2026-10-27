@@ -13,4 +13,4 @@ COPY $TARGETPLATFORM/artifactor /usr/local/bin/artifactor
 ENV DB_DIR=/data/db \
     PORT=8080
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/artifactor"]
+ENTRYPOINT ["/usr/local/bin/artifactor", "scan"]

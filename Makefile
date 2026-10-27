@@ -30,10 +30,10 @@ fmt: ## Format the code
 	gofmt -w .
 
 run: ## Run locally against your kubeconfig (dev mode)
-	go run . --db-dir ./grype-db
+	go run . scan --db-dir ./grype-db
 
 export: ## Run a scan and export the full report (scan.html + sbom/ + grype/) to ./export/
-	rm -rf export && go run . --db-dir ./grype-db --export export
+	rm -rf export && go run . scan --db-dir ./grype-db --export export
 
 docker-build: ## Build multi-arch container images locally (snapshot, no push; requires goreleaser + buildx)
 	goreleaser release --clean --snapshot

@@ -34,35 +34,67 @@ var version = "dev"
 var spaHTML []byte
 
 func main() {
-	// Subcommands: install / uninstall deploy the embedded manifests.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "install", "uninstall":
 			runInstallCmd(os.Args[1], os.Args[2:])
 			return
+		case "scan":
+			runScanCmd(os.Args[2:])
+			return
+		case "--version", "-v":
+			fmt.Printf("artifactor %s\n", version)
+			return
 		}
+		if strings.HasPrefix(os.Args[1], "-") {
+			// flags given without a subcommand: treat as `scan`
+			// (backward compatibility with the previous default)
+			runScanCmd(os.Args[1:])
+			return
+		}
+		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\n", os.Args[1])
+		printMainUsage()
+		os.Exit(2)
 	}
+	printMainUsage()
+}
 
+// printMainUsage prints the top-level subcommand help.
+func printMainUsage() {
+	fmt.Fprintf(os.Stderr, "Usage: artifactor [install|uninstall|scan] [flags]\n\n"+
+		"Subcommands:\n"+
+		"  scan         scan the cluster images and serve the web app\n"+
+		"  install      deploy the manifests to the cluster via kubectl (--dump prints them instead)\n"+
+		"  uninstall    remove the manifests from the cluster via kubectl (--dump prints them instead)\n\n"+
+		"Run 'artifactor scan --help' for the scan flags.\n")
+}
+
+// runScanCmd implements the `scan` subcommand (the previous default
+// behavior): scan the cluster and serve the SPA + API.
+func runScanCmd(args []string) {
+	fs := flag.NewFlagSet("artifactor scan", flag.ExitOnError)
 	var (
-		port         = flag.Int("port", envInt("PORT", 8080), "HTTP listen port")
-		namespaceCSV = flag.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in these namespaces (comma-separated list; empty = all namespaces)")
-		interval     = flag.Duration("scan-interval", envDuration("SCAN_INTERVAL", 6*time.Hour), "automatic rescan interval (0 disables)")
-		concurrency  = flag.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
-		dbDir        = flag.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
-		dbUpdate     = flag.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")
-		platform     = flag.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
-		scanTimeout  = flag.Duration("scan-timeout", envDuration("SCAN_TIMEOUT", 15*time.Minute), "per-image scan timeout")
-		exportHTML   = flag.String("export-html", envStr("EXPORT_HTML", ""), "run a scan, export the report as a single self-contained HTML file to this path, and exit")
-		exportSBOM   = flag.String("export-sbom", envStr("EXPORT_SBOM", ""), "run a scan, export one syft SBOM (syft-json) per image into this directory, and exit")
-		exportGrype  = flag.String("export-grype", envStr("EXPORT_GRYPE", ""), "run a scan, export one grype JSON report per image into this directory, and exit")
-		exportAll    = flag.String("export", envStr("EXPORT", ""), "run a scan, export the full report (scan.html + sbom/ + grype/) into this directory, and exit")
-		showVersion  = flag.Bool("version", false, "print version and exit")
+		port         = fs.Int("port", envInt("PORT", 8080), "HTTP listen port")
+		namespaceCSV = fs.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in these namespaces (comma-separated list; empty = all namespaces)")
+		interval     = fs.Duration("scan-interval", envDuration("SCAN_INTERVAL", 6*time.Hour), "automatic rescan interval (0 disables)")
+		concurrency  = fs.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
+		dbDir        = fs.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
+		dbUpdate     = fs.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")
+		platform     = fs.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
+		scanTimeout  = fs.Duration("scan-timeout", envDuration("SCAN_TIMEOUT", 15*time.Minute), "per-image scan timeout")
+		exportHTML   = fs.String("export-html", envStr("EXPORT_HTML", ""), "run a scan, export the report as a single self-contained HTML file to this path, and exit")
+		exportSBOM   = fs.String("export-sbom", envStr("EXPORT_SBOM", ""), "run a scan, export one syft SBOM (syft-json) per image into this directory, and exit")
+		exportGrype  = fs.String("export-grype", envStr("EXPORT_GRYPE", ""), "run a scan, export one grype JSON report per image into this directory, and exit")
+		exportAll    = fs.String("export", envStr("EXPORT", ""), "run a scan, export the full report (scan.html + sbom/ + grype/) into this directory, and exit")
+		showVersion  = fs.Bool("version", false, "print version and exit")
 	)
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: artifactor [install|uninstall] [flags]\n\nSubcommands:\n  install      deploy the manifests to the cluster via kubectl (--dump prints them instead)\n  uninstall    remove the manifests from the cluster via kubectl (--dump prints them instead)\n\nFlags:\n")
-		flag.PrintDefaults()
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: artifactor scan [flags]\n\nFlags:\n")
+		fs.PrintDefaults()
 	}
-	flag.Parse()
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
 	log.SetPrefix("artifactor: ")
 	log.SetFlags(log.LstdFlags)
 

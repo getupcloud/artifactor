@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -260,6 +261,7 @@ type Options struct {
 	Namespaces  []string               // restrict scanning to these namespaces (empty = all)
 	Provider    vulnerability.Provider // initial grype vulnerability DB provider (may be nil; set later via SetProvider)
 	ECR         *ecr.Provider          // AWS ECR credential provider via the AWS chain/IRSA (nil disables)
+	KeepSBOM    bool                   // retain the encoded syft SBOM per image in memory (needed by --export-sbom)
 	Platform    string
 	Timeout     time.Duration
 	Concurrency int
@@ -318,6 +320,10 @@ func defaultMatchers() []match.Matcher {
 
 // RunOnce discovers the current set of images and scans all of them.
 func (s *Scanner) RunOnce(ctx context.Context) error {
+	// Return freed pages to the OS after the run: the Go runtime tends to
+	// hold onto heap it no longer needs, which looks like a leak in RSS.
+	defer debug.FreeOSMemory()
+
 	disc, err := s.opts.Client.Discover(ctx, s.opts.Namespaces)
 	if err != nil {
 		return fmt.Errorf("discover images: %w", err)
@@ -421,10 +427,12 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 	if pkgContext.Distro != nil {
 		result.Distro = pkgContext.Distro.String()
 	}
-	if encoded, err := encodeSyftJSON(*sbo); err == nil {
-		result.SBOM = encoded
-	} else {
-		s.logger.Printf("warning: cannot encode syft SBOM for %s: %v", imageRef, err)
+	if s.opts.KeepSBOM {
+		if encoded, err := encodeSyftJSON(*sbo); err == nil {
+			result.SBOM = encoded
+		} else {
+			s.logger.Printf("warning: cannot encode syft SBOM for %s: %v", imageRef, err)
+		}
 	}
 
 	for _, p := range sbo.Artifacts.Packages.Sorted() {

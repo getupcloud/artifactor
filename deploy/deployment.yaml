@@ -41,6 +41,10 @@ spec:
             # exist: fail fast instead of timing out on the metadata service
             - name: AWS_EC2_METADATA_DISABLED
               value: "true"
+            # the pod never serves SBOM exports (only the one-shot CLI does):
+            # drop the per-image SBOM bytes to save memory
+            - name: KEEP_SBOM
+              value: "false"
           resources:
             requests:
               cpu: 100m

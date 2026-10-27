@@ -29,6 +29,7 @@ func TestScanAlpineIntegration(t *testing.T) {
 	store := NewStore()
 	s := New(Options{
 		Provider: provider,
+		KeepSBOM: true,
 		Platform: "linux/amd64",
 		Timeout:  5 * time.Minute,
 		Store:    store,

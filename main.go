@@ -88,6 +88,7 @@ func runScanCmd(args []string) {
 		exportGrype  = fs.String("export-grype", envStr("EXPORT_GRYPE", ""), "run a scan, export one grype JSON report per image into this directory, and exit")
 		exportAll    = fs.String("export", envStr("EXPORT", ""), "run a scan, export the full report (scan.html + sbom/ + grype/) into this directory, and exit")
 		ecrAuth      = fs.Bool("ecr-auth", envBool("ECR_AUTH", true), "authenticate to AWS ECR registries via the AWS credential chain (IRSA) when no pull secret matches")
+		keepSBOM     = fs.Bool("keep-sbom", envBool("KEEP_SBOM", true), "keep the syft SBOM of each image in memory (needed by --export-sbom; disable to save memory)")
 		showVersion  = fs.Bool("version", false, "print version and exit")
 	)
 	fs.Usage = func() {
@@ -116,7 +117,7 @@ func runScanCmd(args []string) {
 			sbomDir:  *exportSBOM,
 			grypeDir: *exportGrype,
 			allDir:   *exportAll,
-		}, *dbDir, *dbUpdate, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth)
+		}, *dbDir, *dbUpdate, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *keepSBOM)
 		if err != nil {
 			log.Fatalf("export: %v", err)
 		}
@@ -144,6 +145,7 @@ func runScanCmd(args []string) {
 			Client:      k8sClient,
 			Namespaces:  namespaces,
 			ECR:         ecrProvider,
+			KeepSBOM:    *keepSBOM,
 			Platform:    *platform,
 			Timeout:     *scanTimeout,
 			Concurrency: *concurrency,
@@ -262,7 +264,7 @@ type exportRequest struct {
 
 // runExport implements the --export* flags: prepare the DB, scan every image
 // once, write the requested artifacts, and exit.
-func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth bool) error {
+func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, keepSBOM bool) error {
 	k8sClient, mode, k8sErr := k8s.New()
 	if k8sErr != nil {
 		return fmt.Errorf("no cluster access: %w", k8sErr)
@@ -283,11 +285,18 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 	if ecrAuth {
 		ecrProvider = ecr.NewProvider()
 	}
+	// SBOM exports need the SBOM retained in memory; force it on when the
+	// user asked for sbom/complete exports.
+	if (req.sbomDir != "" || req.allDir != "") && !keepSBOM {
+		log.Print("WARNING: --keep-sbom=false but an SBOM export was requested; forcing SBOM retention for this run")
+		keepSBOM = true
+	}
 	sc := scanner.New(scanner.Options{
 		Client:      k8sClient,
 		Namespaces:  namespaces,
 		Provider:    provider,
 		ECR:         ecrProvider,
+		KeepSBOM:    keepSBOM,
 		Platform:    platform,
 		Timeout:     scanTimeout,
 		Concurrency: concurrency,

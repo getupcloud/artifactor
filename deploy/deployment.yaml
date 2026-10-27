@@ -37,6 +37,10 @@ spec:
               value: 6h
             - name: CONCURRENCY
               value: "3"
+            # skip the EC2 IMDS fallback when no IRSA/web-identity creds
+            # exist: fail fast instead of timing out on the metadata service
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
           resources:
             requests:
               cpu: 100m

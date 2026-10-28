@@ -1,0 +1,11 @@
+[allowlists]
+description = "Exceções globais do projeto"
+paths= [
+  '''bin/.*''',
+  '''dist/.*''',
+  '''grype-db/.*''',
+  '''.*/scan.html''',
+  '''export/.*''',
+  '''.*\.tar\.gz''',
+  '''.*\.swp'''
+]

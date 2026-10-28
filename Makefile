@@ -16,16 +16,6 @@ endif
 .ONESHELL:
 .PHONY: help build test vet fmt run export bump docker-build docker-push deploy undeploy port-forward logs tidy clean
 
-bump: ## Bump VERSION (Makefile) and the image tag (deploy/deployment.yaml)
-	@read -p 'Next version: ' -e -i "$(VERSION)" NEXT_VERSION
-	if [ "$(VERSION)" == "$$NEXT_VERSION" ]; then
-		echo "Error: same version"
-		exit 1
-	fi
-	sed -i -E 's|^(VERSION[[:space:]]*\?=[[:space:]]*).*|\1'"$$NEXT_VERSION"'|' Makefile
-	sed -i -E 's|(image:[[:space:]]*$(IMAGE_NAME):)[^ #]+|\1'"$$NEXT_VERSION"'|' deploy/deployment.yaml
-	git commit -m "Bump version $$NEXT_VERSION" Makefile deploy/deployment.yaml
-
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
@@ -46,6 +36,19 @@ run: ## Run locally against your kubeconfig (dev mode)
 
 export: ## Run a scan and export the full report (scan.html + sbom/ + grype/) to ./export/
 	rm -rf export && go run . scan --db-dir ./grype-db --export export
+
+bump: gitleaks ## Bump VERSION (Makefile) and the image tag (deploy/deployment.yaml)
+	@read -p 'Next version: ' -e -i "$(VERSION)" NEXT_VERSION
+	if [ "$(VERSION)" == "$$NEXT_VERSION" ]; then
+		echo "Error: same version"
+		exit 1
+	fi
+	sed -i -E 's|^(VERSION[[:space:]]*\?=[[:space:]]*).*|\1'"$$NEXT_VERSION"'|' Makefile
+	sed -i -E 's|(image:[[:space:]]*$(IMAGE_NAME):)[^ #]+|\1'"$$NEXT_VERSION"'|' deploy/deployment.yaml
+	git commit -m "Bump version $$NEXT_VERSION" Makefile deploy/deployment.yaml
+
+gitleaks: ## Avoid secrets to leak
+	gitleaks git && gitleaks dir
 
 docker-build: ## Build multi-arch container images locally (snapshot, no push; requires goreleaser + buildx)
 	goreleaser release --clean --snapshot

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -72,8 +73,10 @@ func (s *Server) FetchNamedVulns(ctx context.Context) error {
 	if url == "" {
 		url = defaultNamesURL
 	}
+	log.Printf("downloading named vulnerabilities list from %s ...", url)
 	ctx, cancel := context.WithTimeout(ctx, namesFetchTimeout)
 	defer cancel()
+	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -97,6 +100,7 @@ func (s *Server) FetchNamedVulns(ctx context.Context) error {
 	s.namedMu.Lock()
 	s.namedVulns = groups
 	s.namedMu.Unlock()
+	log.Printf("named vulnerabilities list downloaded: %d bytes, %d entrie(s) in %s", len(data), len(groups), time.Since(start).Round(time.Millisecond))
 	return nil
 }
 

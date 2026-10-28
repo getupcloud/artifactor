@@ -185,6 +185,16 @@ func runScanCmd(args []string) {
 		}
 	}()
 
+	// Refresh the named vulnerabilities list from the GitHub repository at
+	// startup (10s timeout); the embedded copy stays as fallback.
+	go func() {
+		if err := server.FetchNamedVulns(ctx); err != nil {
+			log.Printf("WARNING: cannot refresh named vulnerabilities from GitHub: %v (using the embedded copy)", err)
+		} else {
+			log.Print("named vulnerabilities refreshed from GitHub")
+		}
+	}()
+
 	// 3. Grype vulnerability database: downloads on first run (can take a
 	//    while), so it runs in the background while the UI is already up.
 	go func() {
@@ -313,6 +323,12 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		K8sErr:    k8sErr,
 		DB:        func() scanner.DBStatus { return dbStatus },
 	})
+
+	// refresh the named vulnerabilities list (10s timeout); the embedded
+	// copy is used when the fetch fails
+	if err := server.FetchNamedVulns(ctx); err != nil {
+		log.Printf("WARNING: cannot refresh named vulnerabilities from GitHub: %v (using the embedded copy)", err)
+	}
 
 	if req.htmlPath != "" {
 		if err := os.WriteFile(req.htmlPath, server.ExportHTML(), 0o644); err != nil {

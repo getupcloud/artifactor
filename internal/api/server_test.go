@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -212,6 +213,44 @@ func TestNamespaceEndpointAndFilter(t *testing.T) {
 	// unknown namespace: nothing
 	if rows := getJSON(t, srv.Handler(), "/api/cves?namespace=nope"); len(rows) != 0 {
 		t.Fatalf("namespace=nope rows = %d, want 0", len(rows))
+	}
+}
+
+func TestFetchNamedVulns(t *testing.T) {
+	srv, _ := testServer(t)
+
+	// failure at startup: the embedded copy stays in place
+	srv.opts.NamesURL = "http://127.0.0.1:1/nope"
+	if err := srv.FetchNamedVulns(context.Background()); err == nil {
+		t.Fatal("expected fetch error for unreachable URL")
+	}
+	groups := getJSON(t, srv.Handler(), "/api/named-vulns")
+	if len(groups) != 4 || groups[0]["name"] != "PHP2Shell" {
+		t.Fatalf("groups after failed fetch = %v", groups)
+	}
+
+	// success: the fetched list replaces the embedded one
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"name":"NewShell","cves":["CVE-1"]}]`))
+	}))
+	defer remote.Close()
+	srv.opts.NamesURL = remote.URL
+	if err := srv.FetchNamedVulns(context.Background()); err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	groups = getJSON(t, srv.Handler(), "/api/named-vulns")
+	if len(groups) != 1 || groups[0]["name"] != "NewShell" {
+		t.Fatalf("groups after fetch = %v", groups)
+	}
+
+	// failure after a successful fetch: the last known-good list stays
+	srv.opts.NamesURL = "http://127.0.0.1:1/nope"
+	if err := srv.FetchNamedVulns(context.Background()); err == nil {
+		t.Fatal("expected fetch error for unreachable URL")
+	}
+	groups = getJSON(t, srv.Handler(), "/api/named-vulns")
+	if len(groups) != 1 || groups[0]["name"] != "NewShell" {
+		t.Fatalf("groups after later failed fetch = %v", groups)
 	}
 }
 

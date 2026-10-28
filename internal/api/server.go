@@ -7,9 +7,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/getupcloud/artifactor/internal/k8s"
@@ -19,20 +22,28 @@ import (
 // exportMarker is replaced with the embedded data snapshot when exporting.
 const exportMarker = "<!-- EXPORT_DATA -->"
 
-// namedVuln is a well-known vulnerability family (loaded from
-// web/names.json, which the SPA also fetches directly from the GitHub
-// repository as its primary source).
+// namedVuln is a well-known vulnerability family (from web/names.json in
+// the repository).
 type namedVuln struct {
 	Name string   `json:"name"`
 	CVEs []string `json:"cves"`
 }
+
+// defaultNamesURL is the GitHub raw URL of the named vulnerabilities list;
+// the process refreshes it at startup and falls back to the embedded copy.
+const (
+	defaultNamesURL       = "https://raw.githubusercontent.com/getupcloud/artifactor/main/web/names.json"
+	namesFetchTimeout     = 10 * time.Second
+	namesFetchMaxBodySize = 1 << 20 // 1 MiB
+)
 
 // Options wires the API server to the scan store and scan trigger.
 type Options struct {
 	Store     *scanner.Store
 	Scanner   *scanner.Scanner
 	SPA       []byte
-	NamesJSON []byte // contents of web/names.json (named vulnerability groups)
+	NamesJSON []byte // embedded contents of web/names.json (fallback list)
+	NamesURL  string // override for the GitHub fetch (defaults to defaultNamesURL; mainly for tests)
 	Mode      string // "in-cluster" or "kubeconfig"
 	K8sErr    error
 	DB        func() scanner.DBStatus // dynamic DB status (DB initializes in the background)
@@ -41,6 +52,7 @@ type Options struct {
 // Server implements the HTTP API.
 type Server struct {
 	opts       Options
+	namedMu    sync.RWMutex
 	namedVulns []namedVuln
 }
 
@@ -50,6 +62,49 @@ func New(opts Options) *Server {
 		s.namedVulns = []namedVuln{}
 	}
 	return s
+}
+
+// FetchNamedVulns refreshes the named vulnerability list from the GitHub
+// repository with a 10 second timeout. On any failure the embedded copy
+// stays in place and the error is returned for logging.
+func (s *Server) FetchNamedVulns(ctx context.Context) error {
+	url := s.opts.NamesURL
+	if url == "" {
+		url = defaultNamesURL
+	}
+	ctx, cancel := context.WithTimeout(ctx, namesFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, namesFetchMaxBodySize))
+	if err != nil {
+		return err
+	}
+	var groups []namedVuln
+	if err := json.Unmarshal(data, &groups); err != nil || len(groups) == 0 {
+		return fmt.Errorf("invalid names.json payload")
+	}
+	s.namedMu.Lock()
+	s.namedVulns = groups
+	s.namedMu.Unlock()
+	return nil
+}
+
+// namedVulnList returns the current named vulnerability groups.
+func (s *Server) namedVulnList() []namedVuln {
+	s.namedMu.RLock()
+	defer s.namedMu.RUnlock()
+	return s.namedVulns
 }
 
 // Handler returns the HTTP routes.
@@ -293,10 +348,10 @@ func (s *Server) namespaceNames() []string {
 	return out
 }
 
-// GET /api/named-vulns returns the named vulnerability groups (from
-// web/names.json) as a fallback for the SPA when the GitHub raw fetch fails.
+// GET /api/named-vulns returns the named vulnerability groups (freshly
+// fetched from GitHub at startup, or the embedded fallback copy).
 func (s *Server) handleNamedVulns(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.namedVulns)
+	writeJSON(w, http.StatusOK, s.namedVulnList())
 }
 
 // GET /api/namespaces returns the distinct namespaces of the workloads
@@ -362,7 +417,7 @@ func (s *Server) buildSnapshot() exportSnapshot {
 		Images:           s.opts.Store.Summaries(),
 		Cves:             s.cveRows(),
 		Namespaces:       s.namespaceNames(),
-		NamedVulns:       s.namedVulns,
+		NamedVulns:       s.namedVulnList(),
 		Artifacts:        s.artifactNames("", ""),
 		ArtifactsByImage: byImage,
 	}

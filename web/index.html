@@ -648,21 +648,14 @@ $("clear-btn").onclick = () => {
 
 /* ---------- named vulnerabilities selector ---------- */
 
-// Primary source: the names.json file in the GitHub repository, so the
-// list can be updated without releasing a new image. Falls back to the
-// server's embedded copy (or the export snapshot) when offline.
-const NAMED_VULNS_URL = "https://raw.githubusercontent.com/getupcloud/artifactor/main/web/names.json";
-
+// The process fetches the names.json file from the GitHub repository at
+// startup (10s timeout) and falls back to the embedded copy; the SPA just
+// reads the list served by the API (or the export snapshot).
 async function loadNamedVulns() {
-  let groups = null;
-  try {
-    const res = await fetch(NAMED_VULNS_URL, { cache: "no-store" });
-    if (res.ok) groups = await res.json();
-  } catch { /* offline or blocked */ }
-  if (!groups || !Array.isArray(groups) || groups.length === 0) {
-    try { groups = await api("/api/named-vulns"); }
-    catch { return; }
-  }
+  let groups;
+  try { groups = await api("/api/named-vulns"); }
+  catch { return; }
+  if (!groups || !Array.isArray(groups) || groups.length === 0) return;
   state.namedGroups = groups.map((g) => ({
     key: String(g.name || "").toLowerCase().replace(/[^a-z0-9]+/g, ""),
     name: g.name,

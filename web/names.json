@@ -8,7 +8,7 @@
     ]
   },
   {
-    "name": "HTTP2Shell/Node2Shell/Broccoli2Shell/Python2Shell",
+    "name": "HTTP2Shell (Node2Shell, Broccoli2Shell, Python2Shell)",
     "cves": [
       "CVE-2026-111497"
     ]

@@ -667,7 +667,7 @@ async function loadNamedVulns() {
   for (const g of state.namedGroups) {
     const opt = document.createElement("option");
     opt.value = g.key;
-    opt.textContent = g.name + " (" + g.cves.join(", ") + ")";
+    opt.textContent = g.name + ": " + g.cves.join(", ");
     sel.appendChild(opt);
   }
   sel.value = state.namedGroups.some((g) => g.key === current) ? current : "";

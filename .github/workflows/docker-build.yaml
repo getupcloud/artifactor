@@ -1,13 +1,13 @@
 name: build-and-push
 
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
-    paths-ignore:
-      - 'README.md'
-
   workflow_dispatch:
+  #push:
+  #  branches: [main]
+  #  tags: ["v*"]
+  #  paths-ignore:
+  #    - 'README.md'
+
 
 permissions:
   contents: read

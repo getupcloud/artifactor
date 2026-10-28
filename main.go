@@ -34,6 +34,9 @@ var version = "dev"
 //go:embed web/index.html
 var spaHTML []byte
 
+//go:embed web/names.json
+var namesJSON []byte
+
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -157,11 +160,12 @@ func runScanCmd(args []string) {
 	var dbMu sync.RWMutex
 	dbStatus := scanner.DBStatus{Dir: *dbDir}
 	server := api.New(api.Options{
-		Store:   store,
-		Scanner: sc,
-		SPA:     spaHTML,
-		Mode:    mode,
-		K8sErr:  k8sErr,
+		Store:     store,
+		Scanner:   sc,
+		SPA:       spaHTML,
+		NamesJSON: namesJSON,
+		Mode:      mode,
+		K8sErr:    k8sErr,
 		DB: func() scanner.DBStatus {
 			dbMu.RLock()
 			defer dbMu.RUnlock()
@@ -302,11 +306,12 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 	}
 
 	server := api.New(api.Options{
-		Store:  store,
-		SPA:    spaHTML,
-		Mode:   mode,
-		K8sErr: k8sErr,
-		DB:     func() scanner.DBStatus { return dbStatus },
+		Store:     store,
+		SPA:       spaHTML,
+		NamesJSON: namesJSON,
+		Mode:      mode,
+		K8sErr:    k8sErr,
+		DB:        func() scanner.DBStatus { return dbStatus },
 	})
 
 	if req.htmlPath != "" {

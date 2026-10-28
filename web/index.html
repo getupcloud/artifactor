@@ -262,14 +262,9 @@ function snapshotFilterCVEs(params) {
   const image = params.get("image") || "";
   const namespace = params.get("namespace") || "";
   const artifact = (params.get("artifact") || "").toLowerCase();
-  // multiple CVE IDs separated by spaces: match when any token is contained.
-  // A named vulnerability group expands to its CVE IDs (OR-combined).
+  // multiple CVE IDs separated by spaces: match when any token is contained
+  // (named vulnerability groups are expanded client-side into these tokens)
   const idTokens = (params.get("id") || "").toLowerCase().split(/\s+/).filter(Boolean);
-  const namedKey = params.get("named") || "";
-  if (namedKey && SNAPSHOT.namedVulns) {
-    const group = SNAPSHOT.namedVulns.find((v) => v.key === namedKey);
-    if (group) idTokens.push(...(group.cves || []).map((i) => i.toLowerCase()));
-  }
   const sevs = (params.get("severity") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const excluded = (params.get("exclude") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const fixedOnly = params.get("fixed") === "1";
@@ -319,6 +314,7 @@ function snapshotAPI(path) {
 const state = {
   images: [],          // /api/images summaries
   selected: "",        // "" = all images
+  namedGroups: [],     // named vulnerability groups (from web/names.json)
   sevFilter: new Set(),// severities turned OFF (chips start all "on")
   statusFilter: new Set(), // image statuses hidden from the list (chips start all "on")
   status: null,
@@ -412,10 +408,15 @@ async function loadCVEs() {
   if (state.selected) params.set("image", state.selected);
   const artifact = $("artifact-filter").value.trim();
   if (artifact) params.set("artifact", artifact);
-  const cveId = $("cve-filter").value.trim();
-  if (cveId) params.set("id", cveId);
-  const named = $("named-vuln-filter").value;
-  if (named) params.set("named", named);
+  // CVE IDs from the text field plus the selected named vulnerability group
+  // (expanded client-side, OR-combined)
+  const cveIds = $("cve-filter").value.trim().split(/\s+/).filter(Boolean);
+  const namedKey = $("named-vuln-filter").value;
+  if (namedKey) {
+    const group = state.namedGroups.find((g) => g.key === namedKey);
+    if (group) cveIds.push(...(group.cves || []));
+  }
+  if (cveIds.length) params.set("id", cveIds.join(" "));
   const ns = $("namespace-filter").value;
   if (ns) params.set("namespace", ns);
   if ($("fixed-filter").checked) params.set("fixed", "1");
@@ -647,20 +648,36 @@ $("clear-btn").onclick = () => {
 
 /* ---------- named vulnerabilities selector ---------- */
 
+// Primary source: the names.json file in the GitHub repository, so the
+// list can be updated without releasing a new image. Falls back to the
+// server's embedded copy (or the export snapshot) when offline.
+const NAMED_VULNS_URL = "https://raw.githubusercontent.com/getupcloud/artifactor/main/web/names.json";
+
 async function loadNamedVulns() {
-  let groups;
-  try { groups = await api("/api/named-vulns"); }
-  catch { return; }
+  let groups = null;
+  try {
+    const res = await fetch(NAMED_VULNS_URL, { cache: "no-store" });
+    if (res.ok) groups = await res.json();
+  } catch { /* offline or blocked */ }
+  if (!groups || !Array.isArray(groups) || groups.length === 0) {
+    try { groups = await api("/api/named-vulns"); }
+    catch { return; }
+  }
+  state.namedGroups = groups.map((g) => ({
+    key: String(g.name || "").toLowerCase().replace(/[^a-z0-9]+/g, ""),
+    name: g.name,
+    cves: g.cves || [],
+  }));
   const sel = $("named-vuln-filter");
   const current = sel.value;
   sel.innerHTML = '<option value="">None</option>';
-  for (const g of groups) {
+  for (const g of state.namedGroups) {
     const opt = document.createElement("option");
     opt.value = g.key;
-    opt.textContent = g.label + " (" + (g.cves || []).join(", ") + ")";
+    opt.textContent = g.name + " (" + g.cves.join(", ") + ")";
     sel.appendChild(opt);
   }
-  sel.value = groups.some((g) => g.key === current) ? current : "";
+  sel.value = state.namedGroups.some((g) => g.key === current) ? current : "";
 }
 
 /* ---------- namespace selector ---------- */

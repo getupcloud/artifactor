@@ -19,54 +19,37 @@ import (
 // exportMarker is replaced with the embedded data snapshot when exporting.
 const exportMarker = "<!-- EXPORT_DATA -->"
 
-// namedVuln is a well-known vulnerability family exposed in the SPA's
-// "Named vulnerabilities" selector.
+// namedVuln is a well-known vulnerability family (loaded from
+// web/names.json, which the SPA also fetches directly from the GitHub
+// repository as its primary source).
 type namedVuln struct {
-	Key   string   `json:"key"`
-	Label string   `json:"label"`
-	CVEs  []string `json:"cves"`
-}
-
-// namedVulnerabilities are the selectable well-known vulnerability groups.
-var namedVulnerabilities = []namedVuln{
-	{Key: "php2shell", Label: "PHP2Shell", CVEs: []string{"CVE-2026-109618", "CVE-2026-109619", "CVE-2026-115560"}},
-	{Key: "http2shell", Label: "HTTP2Shell/Node2Shell/Broccoli2Shell/Python2Shell", CVEs: []string{"CVE-2026-111497"}},
-	{Key: "react2shell", Label: "React2Shell", CVEs: []string{"CVE-2025-55182", "CVE-2025-66478"}},
-	{Key: "log4shell", Label: "Log4Shell", CVEs: []string{"CVE-2021-44228"}},
-}
-
-// namedIDTokens returns the CVE IDs of a named vulnerability group (lower
-// case), or nil for unknown keys.
-func namedIDTokens(key string) []string {
-	for _, v := range namedVulnerabilities {
-		if v.Key == key {
-			out := make([]string, 0, len(v.CVEs))
-			for _, id := range v.CVEs {
-				out = append(out, strings.ToLower(id))
-			}
-			return out
-		}
-	}
-	return nil
+	Name string   `json:"name"`
+	CVEs []string `json:"cves"`
 }
 
 // Options wires the API server to the scan store and scan trigger.
 type Options struct {
-	Store   *scanner.Store
-	Scanner *scanner.Scanner
-	SPA     []byte
-	Mode    string // "in-cluster" or "kubeconfig"
-	K8sErr  error
-	DB      func() scanner.DBStatus // dynamic DB status (DB initializes in the background)
+	Store     *scanner.Store
+	Scanner   *scanner.Scanner
+	SPA       []byte
+	NamesJSON []byte // contents of web/names.json (named vulnerability groups)
+	Mode      string // "in-cluster" or "kubeconfig"
+	K8sErr    error
+	DB        func() scanner.DBStatus // dynamic DB status (DB initializes in the background)
 }
 
 // Server implements the HTTP API.
 type Server struct {
-	opts Options
+	opts       Options
+	namedVulns []namedVuln
 }
 
 func New(opts Options) *Server {
-	return &Server{opts: opts}
+	s := &Server{opts: opts}
+	if err := json.Unmarshal(opts.NamesJSON, &s.namedVulns); err != nil || len(s.namedVulns) == 0 {
+		s.namedVulns = []namedVuln{}
+	}
+	return s
 }
 
 // Handler returns the HTTP routes.
@@ -217,10 +200,9 @@ func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 	image := q.Get("image")
 	namespace := q.Get("namespace")
 	// multiple CVE IDs separated by spaces: a row matches when it contains
-	// any of the tokens. A named vulnerability group (named=) expands to its
-	// CVE IDs and is OR-combined with the typed tokens.
+	// any of the tokens (the SPA expands named vulnerability groups into
+	// these tokens client-side)
 	idFilters := strings.Fields(strings.ToLower(q.Get("id")))
-	idFilters = append(idFilters, namedIDTokens(q.Get("named"))...)
 	artifactFilter := scanner.PackageNameFilter(q.Get("artifact"))
 	fixedOnly := q.Get("fixed") == "1"
 
@@ -311,10 +293,10 @@ func (s *Server) namespaceNames() []string {
 	return out
 }
 
-// GET /api/named-vulns returns the well-known vulnerability groups for the
-// SPA's "Named vulnerabilities" selector.
+// GET /api/named-vulns returns the named vulnerability groups (from
+// web/names.json) as a fallback for the SPA when the GitHub raw fetch fails.
 func (s *Server) handleNamedVulns(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, namedVulnerabilities)
+	writeJSON(w, http.StatusOK, s.namedVulns)
 }
 
 // GET /api/namespaces returns the distinct namespaces of the workloads
@@ -380,7 +362,7 @@ func (s *Server) buildSnapshot() exportSnapshot {
 		Images:           s.opts.Store.Summaries(),
 		Cves:             s.cveRows(),
 		Namespaces:       s.namespaceNames(),
-		NamedVulns:       namedVulnerabilities,
+		NamedVulns:       s.namedVulns,
 		Artifacts:        s.artifactNames("", ""),
 		ArtifactsByImage: byImage,
 	}

@@ -1,0 +1,29 @@
+[
+  {
+    "name": "PHP2Shell",
+    "cves": [
+      "CVE-2026-109618",
+      "CVE-2026-109619",
+      "CVE-2026-115560"
+    ]
+  },
+  {
+    "name": "HTTP2Shell/Node2Shell/Broccoli2Shell/Python2Shell",
+    "cves": [
+      "CVE-2026-111497"
+    ]
+  },
+  {
+    "name": "React2Shell",
+    "cves": [
+      "CVE-2025-55182",
+      "CVE-2025-66478"
+    ]
+  },
+  {
+    "name": "Log4Shell",
+    "cves": [
+      "CVE-2021-44228"
+    ]
+  }
+]

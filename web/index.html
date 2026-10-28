@@ -183,8 +183,9 @@ tr.expand-row:hover td { background: var(--bg); }
   <div class="stat status" data-status="scanned" title="Show/hide scanned images"><div class="n" id="stat-scanned">0</div><div class="l">Scanned</div></div>
   <div class="stat status" data-status="error" title="Show/hide images with errors"><div class="n" id="stat-errors">0</div><div class="l">Errors</div></div>
   <div class="stat status" data-status="scanning" title="Show/hide images being scanned"><div class="n" id="stat-scanning">0</div><div class="l">Scanning</div></div>
-  <div class="stat"><div class="n" id="stat-cves">0</div><div class="l">Total CVEs</div></div>
+  <div class="stat status" data-status="queued" title="Show/hide images waiting to be scanned"><div class="n" id="stat-waiting">0</div><div class="l">Waiting</div></div>
   <div class="stat-divider"></div>
+  <div class="stat"><div class="n" id="stat-cves">0</div><div class="l">Total CVEs</div></div>
   <div class="stat sev" data-sev="critical"><div class="n critical" id="stat-critical">0</div><div class="l">Critical</div></div>
   <div class="stat sev" data-sev="high"><div class="n high" id="stat-high">0</div><div class="l">High</div></div>
   <div class="stat sev" data-sev="medium"><div class="n medium" id="stat-medium">0</div><div class="l">Medium</div></div>
@@ -365,12 +366,13 @@ async function refreshStatus() {
 
 async function refreshImages() {
   state.images = await api("/api/images");
-  let scanned = 0, errors = 0, scanning = 0, cves = 0;
+  let scanned = 0, errors = 0, scanning = 0, waiting = 0, cves = 0;
   const sev = Object.fromEntries(SEVS.map((s) => [s, 0]));
   for (const img of state.images) {
     if (img.status === "scanned") scanned++;
     if (img.status === "error") errors++;
     if (img.status === "scanning") scanning++;
+    if (img.status === "queued") waiting++;
     cves += img.cveCount || 0;
     for (const s of SEVS) sev[s] += (img.severities || {})[s] || 0;
   }
@@ -378,6 +380,7 @@ async function refreshImages() {
   $("stat-scanned").textContent = scanned;
   $("stat-errors").textContent = errors;
   $("stat-scanning").textContent = scanning;
+  $("stat-waiting").textContent = waiting;
   $("stat-cves").textContent = cves;
   for (const s of SEVS) $("stat-" + s).textContent = sev[s];
   renderImageList();

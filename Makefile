@@ -24,7 +24,7 @@ bump: ## Bump VERSION (Makefile) and the image tag (deploy/deployment.yaml)
 	fi
 	sed -i -E 's|^(VERSION[[:space:]]*\?=[[:space:]]*).*|\1'"$$NEXT_VERSION"'|' Makefile
 	sed -i -E 's|(image:[[:space:]]*$(IMAGE_NAME):)[^ #]+|\1'"$$NEXT_VERSION"'|' deploy/deployment.yaml
-	git commit -m "Bump version $$NEXT_VERSION" Makefile
+	git commit -m "Bump version $$NEXT_VERSION" Makefile deploy/deployment.yaml
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'

@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -90,6 +91,8 @@ func runScanCmd(args []string) {
 		exportSBOM   = fs.String("export-sbom", envStr("EXPORT_SBOM", ""), "run a scan, export one syft SBOM (syft-json) per image into this directory, and exit")
 		exportGrype  = fs.String("export-grype", envStr("EXPORT_GRYPE", ""), "run a scan, export one grype JSON report per image into this directory, and exit")
 		exportAll    = fs.String("export", envStr("EXPORT", ""), "run a scan, export the full report (scan.html + sbom/ + grype/) into this directory, and exit")
+		exportCSV    = fs.String("export-csv", envStr("EXPORT_CSV", ""), "run a scan, export the CVE report as CSV to this file, and exit")
+		openReport   = fs.String("open", envStr("OPEN", ""), "open the exported scan.html with this command after --export (default \"xdg-open\"; ${FILE} is replaced by the path)")
 		ecrAuth      = fs.Bool("ecr-auth", envBool("ECR_AUTH", true), "authenticate to AWS ECR registries via the AWS credential chain (IRSA) when no pull secret matches")
 		keepSBOM     = fs.Bool("keep-sbom", envBool("KEEP_SBOM", true), "keep the syft SBOM of each image in memory (needed by --export-sbom; disable to save memory)")
 		customerName = fs.String("customer-name", os.Getenv("CUSTOMER_NAME"), "customer name shown in the execution logs and report title")
@@ -100,6 +103,7 @@ func runScanCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "Usage: artifactor scan [flags]\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
+	fs.Lookup("open").NoOptDefVal = "xdg-open"
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
@@ -120,13 +124,14 @@ func runScanCmd(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if *exportHTML != "" || *exportSBOM != "" || *exportGrype != "" || *exportAll != "" {
+	if *exportHTML != "" || *exportSBOM != "" || *exportGrype != "" || *exportAll != "" || *exportCSV != "" {
 		err := runExport(ctx, exportRequest{
 			htmlPath: *exportHTML,
 			sbomDir:  *exportSBOM,
 			grypeDir: *exportGrype,
 			allDir:   *exportAll,
-		}, *dbDir, *dbUpdate, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *keepSBOM, *customerName, *clusterName)
+			csvPath:  *exportCSV,
+		}, *dbDir, *dbUpdate, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *keepSBOM, *customerName, *clusterName, *openReport)
 		if err != nil {
 			log.Fatalf("export: %v", err)
 		}
@@ -274,11 +279,12 @@ type exportRequest struct {
 	sbomDir  string // --export-sbom: directory for per-image syft SBOMs
 	grypeDir string // --export-grype: directory for per-image grype JSON reports
 	allDir   string // --export: directory with scan.html + sbom/ + grype/
+	csvPath  string // --export-csv: CVE report as CSV
 }
 
 // runExport implements the --export* flags: prepare the DB, scan every image
 // once, write the requested artifacts, and exit.
-func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, keepSBOM bool, customerName, clusterName string) error {
+func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, keepSBOM bool, customerName, clusterName, openCmd string) error {
 	k8sClient, mode, k8sErr := k8s.New()
 	if k8sErr != nil {
 		return fmt.Errorf("no cluster access: %w", k8sErr)
@@ -361,13 +367,45 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		log.Printf("%d grype report(s) exported to %s", n, req.grypeDir)
 	}
 	if req.allDir != "" {
-		htmlPath, sbomCount, grypeCount, err := server.ExportAll(req.allDir)
+		htmlPath, csvPath, sbomCount, grypeCount, err := server.ExportAll(req.allDir)
 		if err != nil {
 			return err
 		}
-		log.Printf("full report exported to %s (%s, %d SBOM(s), %d grype report(s))", req.allDir, htmlPath, sbomCount, grypeCount)
+		log.Printf("full report exported to %s (%s, %s, %d SBOM(s), %d grype report(s))", req.allDir, htmlPath, csvPath, sbomCount, grypeCount)
+		if openCmd != "" {
+			if err := openFile(openCmd, htmlPath); err != nil {
+				log.Printf("WARNING: cannot open %s: %v", htmlPath, err)
+			}
+		}
+	} else if openCmd != "" {
+		log.Print("WARNING: --open requires --export <dir> (there is no scan.html to open)")
+	}
+	if req.csvPath != "" {
+		if err := server.ExportCVEsCSV(req.csvPath); err != nil {
+			return err
+		}
+		log.Printf("CSV report exported to %s", req.csvPath)
 	}
 	return nil
+}
+
+// openFile launches the viewer command for a file. ${FILE} in the command is
+// replaced with the file path; otherwise the path is appended as the last
+// argument.
+func openFile(command, file string) error {
+	cmdStr := strings.ReplaceAll(command, "${FILE}", file)
+	parts := strings.Fields(cmdStr)
+	if len(parts) == 0 {
+		return fmt.Errorf("empty open command")
+	}
+	args := parts[1:]
+	if !strings.Contains(command, "${FILE}") {
+		args = append(args, file)
+	}
+	cmd := exec.Command(parts[0], args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Start()
 }
 
 // splitNamespaces parses a comma-separated namespace list, trimming spaces,

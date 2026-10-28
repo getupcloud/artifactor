@@ -194,6 +194,21 @@ func mustSecretData(t *testing.T, token string) string {
 	return s
 }
 
+func TestOpenFile(t *testing.T) {
+	// command without ${FILE}: the file path is appended as last argument
+	if err := openFile("true", "/tmp/x"); err != nil {
+		t.Fatalf("openFile(true): %v", err)
+	}
+	// ${FILE} is replaced in place
+	if err := openFile("echo ${FILE} > /dev/null", "/tmp/x"); err != nil {
+		t.Fatalf("openFile(echo): %v", err)
+	}
+	// empty command errors
+	if err := openFile("", "/tmp/x"); err == nil {
+		t.Fatal("openFile(empty) should fail")
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout

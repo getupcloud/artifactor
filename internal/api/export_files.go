@@ -5,6 +5,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -118,6 +119,16 @@ func (s *Server) buildGrypeReport(image string, res scanner.Result) grypeReport 
 	return report
 }
 
+// ExportCVEsCSV writes the full CVE report (unfiltered) as CSV to path.
+func (s *Server) ExportCVEsCSV(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return writeCVEsCSV(f, s.filteredCVEs(url.Values{}))
+}
+
 // ExportSBOMs writes one syft-json SBOM file per scanned image into dir.
 func (s *Server) ExportSBOMs(dir string) (int, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -162,19 +173,23 @@ func (s *Server) ExportGrype(dir string) (int, error) {
 
 // ExportAll writes the complete export into dir: the self-contained HTML
 // report plus the per-image SBOM and grype JSON files.
-func (s *Server) ExportAll(dir string) (htmlPath string, sbomCount, grypeCount int, err error) {
+func (s *Server) ExportAll(dir string) (htmlPath, csvPath string, sbomCount, grypeCount int, err error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", 0, 0, err
+		return "", "", 0, 0, err
 	}
 	htmlPath = filepath.Join(dir, "scan.html")
 	if err := os.WriteFile(htmlPath, s.ExportHTML(), 0o644); err != nil {
-		return "", 0, 0, err
+		return "", "", 0, 0, err
+	}
+	csvPath = filepath.Join(dir, "scan.csv")
+	if err := s.ExportCVEsCSV(csvPath); err != nil {
+		return "", "", 0, 0, err
 	}
 	if sbomCount, err = s.ExportSBOMs(filepath.Join(dir, "sbom")); err != nil {
-		return "", 0, 0, err
+		return "", "", 0, 0, err
 	}
 	if grypeCount, err = s.ExportGrype(filepath.Join(dir, "grype")); err != nil {
-		return "", 0, 0, err
+		return "", "", 0, 0, err
 	}
-	return htmlPath, sbomCount, grypeCount, nil
+	return htmlPath, csvPath, sbomCount, grypeCount, nil
 }

@@ -172,7 +172,8 @@ tr.expand-row:hover td { background: var(--bg); }
   <span class="chip" id="db-chip">db: …</span>
   <span class="chip" id="last-chip">last scan: never</span>
   <span class="spacer"></span>
-  <button class="secondary" id="export-btn" title="Download this report as a single self-contained HTML file">Export</button>
+  <button class="secondary" id="export-btn" title="Download this report as a single self-contained HTML file">HTML</button>
+  <button class="secondary" id="csv-btn" title="Download the CVE report (current filters) as CSV">CSV</button>
   <button id="scan-btn" title="Scan every image in the cluster">Scan now</button>
 </header>
 
@@ -315,6 +316,7 @@ function snapshotAPI(path) {
 const state = {
   images: [],          // /api/images summaries
   selected: "",        // "" = all images
+  lastCVERows: [],     // rows of the last /api/cves render (for offline CSV)
   namedGroups: [],     // named vulnerability groups (from web/names.json)
   sevFilter: new Set(),// severities turned OFF (chips start all "on")
   statusFilter: new Set(), // image statuses hidden from the list (chips start all "on")
@@ -413,7 +415,8 @@ function renderImageList() {
 
 /* ---------- CVE table ---------- */
 
-async function loadCVEs() {
+// buildCVEsParams returns the query parameters of the current filters.
+function buildCVEsParams() {
   const params = new URLSearchParams();
   if (state.selected) params.set("image", state.selected);
   const artifact = $("artifact-filter").value.trim();
@@ -432,11 +435,16 @@ async function loadCVEs() {
   if ($("fixed-filter").checked) params.set("fixed", "1");
   // chips start all "on"; clicking one turns that severity OFF (excluded)
   if (state.sevFilter.size) params.set("exclude", [...state.sevFilter].join(","));
+  return params;
+}
 
+async function loadCVEs() {
+  const params = buildCVEsParams();
   let rows;
   const query = params.toString();
   try { rows = await api("/api/cves?" + query); }
   catch { return; }
+  state.lastCVERows = rows;
 
   // A changed query means the user changed a filter: forget open expansions.
   // Background refreshes reuse the same query and keep them open.
@@ -605,7 +613,57 @@ $("scan-btn").onclick = async () => {
   refreshStatus();
 };
 
-$("export-btn").onclick = () => { window.location.href = "/api/export"; };
+$("export-btn").onclick = () => {
+  if (SNAPSHOT) {
+    // offline: serialize the current document (the embedded snapshot data
+    // travels with it, so the downloaded file stays self-contained)
+    const blob = new Blob(["<!DOCTYPE html>\n" + document.documentElement.outerHTML], { type: "text/html" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "artifactor-report.html";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    return;
+  }
+  window.location.href = "/api/export";
+};
+
+$("csv-btn").onclick = () => {
+  if (SNAPSHOT) {
+    downloadCSVClient();
+    return;
+  }
+  // live mode: let the server render the CSV with the current filters
+  window.location.href = "/api/cves.csv?" + buildCVEsParams().toString();
+};
+
+function csvField(v) {
+  return '"' + String(v ?? "").replace(/"/g, '""') + '"';
+}
+
+// downloadCSVClient builds the CSV from the currently loaded rows (used in
+// offline snapshot mode).
+function downloadCSVClient() {
+  const lines = [["Image", "Namespace", "Controller", "CVE", "Severity", "Package",
+    "Version", "Type", "Fixed In", "Matcher", "Description", "Data Source"]];
+  for (const c of (state.lastCVERows || [])) {
+    const insts = (c.images || []).filter((ref) => ref.image === c.image);
+    lines.push([
+      c.image,
+      insts.map((i) => i.namespace).filter(Boolean).join("; "),
+      insts.map((i) => i.controller).filter(Boolean).join("; "),
+      c.id, c.severity, c.package, c.packageVersion, c.packageType,
+      (c.fixedIn || []).join("; "), c.matcher || "", c.description || "", c.dataSource || "",
+    ]);
+  }
+  const text = lines.map((l) => l.map(csvField).join(",")).join("\n");
+  const blob = new Blob([text], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "artifactor-cves.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 $("img-search").oninput = () => { state.imageSearch = $("img-search").value; renderImageList(); };
 
@@ -716,9 +774,9 @@ async function poll() {
 }
 
 if (SNAPSHOT) {
-  // frozen export: no live actions, no polling
+  // frozen export: no live actions, no polling (HTML/CSV exports remain
+  // available and work offline)
   $("scan-btn").style.display = "none";
-  $("export-btn").style.display = "none";
   const banner = $("banner");
   banner.textContent = "Snapshot report exported at " +
     new Date(SNAPSHOT.generatedAt).toLocaleString() +

@@ -350,6 +350,71 @@ func TestArtifactsEndpoint(t *testing.T) {
 	}
 }
 
+func TestCVEsCSV(t *testing.T) {
+	srv, _ := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/cves.csv", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("csv -> %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/csv") {
+		t.Errorf("content type = %q", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") {
+		t.Errorf("content disposition = %q", cd)
+	}
+	lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+	if len(lines) != 5 { // header + 4 CVE rows
+		t.Fatalf("csv lines = %d, want 5:\n%s", len(lines), rec.Body.String())
+	}
+	if !strings.Contains(lines[0], "CVE") || !strings.Contains(lines[0], "Fixed In") {
+		t.Errorf("header = %q", lines[0])
+	}
+	found := false
+	for _, l := range lines[1:] {
+		if strings.Contains(l, "CVE-2024-0001") {
+			found = true
+			if !strings.Contains(l, "3.0.13") || !strings.Contains(l, "critical") {
+				t.Errorf("row = %q", l)
+			}
+		}
+	}
+	if !found {
+		t.Error("CVE-2024-0001 missing from CSV")
+	}
+
+	// filters apply: only nginx rows
+	req = httptest.NewRequest(http.MethodGet, "/api/cves.csv?image=nginx:1.25", nil)
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	lines = strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+	if len(lines) != 3 { // header + 2 rows
+		t.Fatalf("filtered csv lines = %d, want 3", len(lines))
+	}
+	for _, l := range lines[1:] {
+		if !strings.Contains(l, "nginx:1.25") {
+			t.Errorf("filtered row = %q", l)
+		}
+	}
+}
+
+func TestExportCVEsCSVFile(t *testing.T) {
+	srv, _ := testServer(t)
+	path := filepath.Join(t.TempDir(), "scan.csv")
+	if err := srv.ExportCVEsCSV(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 5 {
+		t.Fatalf("exported csv lines = %d, want 5", len(lines))
+	}
+}
+
 func TestExportEndpoint(t *testing.T) {
 	srv, _ := testServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/export", nil)
@@ -491,20 +556,31 @@ func mustGlob(t *testing.T, dir string) []string {
 func TestExportAll(t *testing.T) {
 	srv, _ := testServer(t)
 	dir := t.TempDir()
-	htmlPath, sbomCount, grypeCount, err := srv.ExportAll(dir)
+	htmlPath, csvPath, sbomCount, grypeCount, err := srv.ExportAll(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if htmlPath != filepath.Join(dir, "scan.html") {
 		t.Errorf("html path = %s", htmlPath)
 	}
+	if csvPath != filepath.Join(dir, "scan.csv") {
+		t.Errorf("csv path = %s", csvPath)
+	}
 	if sbomCount != 1 || grypeCount != 2 {
 		t.Errorf("counts = sbom %d grype %d, want 1/2", sbomCount, grypeCount)
 	}
-	for _, rel := range []string{"scan.html", "sbom", "grype"} {
+	for _, rel := range []string{"scan.html", "scan.csv", "sbom", "grype"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Errorf("missing %s in export dir: %v", rel, err)
 		}
+	}
+	csvData, err := os.ReadFile(csvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(csvData)), "\n")
+	if len(lines) != 5 { // header + 4 rows
+		t.Errorf("exported scan.csv lines = %d, want 5", len(lines))
 	}
 }
 

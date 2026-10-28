@@ -6,11 +6,13 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -121,6 +123,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/images", s.handleImages)
 	mux.HandleFunc("GET /api/cves", s.handleCVEs)
+	mux.HandleFunc("GET /api/cves.csv", s.handleCVEsCSV)
 	mux.HandleFunc("GET /api/named-vulns", s.handleNamedVulns)
 	mux.HandleFunc("GET /api/namespaces", s.handleNamespaces)
 	mux.HandleFunc("GET /api/artifacts", s.handleArtifacts)
@@ -260,7 +263,11 @@ func (s *Server) cveRows() []cveOut {
 // CVEs whose affected images run in that namespace. artifact is a
 // case-insensitive substring match against the syft artifact (package) name.
 func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+	writeJSON(w, http.StatusOK, s.filteredCVEs(r.URL.Query()))
+}
+
+// filteredCVEs applies the /api/cves query filters to all CVE rows.
+func (s *Server) filteredCVEs(q url.Values) []cveOut {
 	image := q.Get("image")
 	namespace := q.Get("namespace")
 	// multiple CVE IDs separated by spaces: a row matches when it contains
@@ -312,7 +319,75 @@ func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, row)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
+}
+
+// csvColumns are the columns of the CSV report.
+var csvColumns = []string{
+	"Image", "Namespace", "Controller", "CVE", "Severity", "Package",
+	"Version", "Type", "Fixed In", "Matcher", "Description", "Data Source",
+}
+
+// writeCVEsCSV writes the given CVE rows as CSV (RFC 4180) to w.
+func writeCVEsCSV(w io.Writer, rows []cveOut) error {
+	cw := csv.NewWriter(w)
+	cw.UseCRLF = false
+	if err := cw.Write(csvColumns); err != nil {
+		return err
+	}
+	for _, row := range rows {
+		namespaces, controllers := []string{}, []string{}
+		for _, ref := range row.Images {
+			if ref.Image != row.Image {
+				continue
+			}
+			if ref.Namespace != "" {
+				namespaces = appendUnique(namespaces, ref.Namespace)
+			}
+			if ref.Controller != "" {
+				controllers = appendUnique(controllers, ref.Controller)
+			}
+		}
+		if err := cw.Write([]string{
+			row.Image,
+			strings.Join(namespaces, "; "),
+			strings.Join(controllers, "; "),
+			row.ID,
+			row.Severity,
+			row.PackageName,
+			row.PackageVersion,
+			row.PackageType,
+			strings.Join(row.FixedIn, "; "),
+			row.Matcher,
+			row.Description,
+			row.DataSource,
+		}); err != nil {
+			return err
+		}
+	}
+	cw.Flush()
+	return cw.Error()
+}
+
+// GET /api/cves.csv exports the CVE report as CSV, honoring the same query
+// filters as /api/cves.
+func (s *Server) handleCVEsCSV(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="artifactor-cves.csv"`)
+	w.Header().Set("Cache-Control", "no-cache")
+	if err := writeCVEsCSV(w, s.filteredCVEs(r.URL.Query())); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// appendUnique appends v to list unless it is already present.
+func appendUnique(list []string, v string) []string {
+	for _, existing := range list {
+		if existing == v {
+			return list
+		}
+	}
+	return append(list, v)
 }
 
 // matchesAnyID reports whether the CVE ID contains any of the given

@@ -343,7 +343,8 @@ async function refreshStatus() {
     if (state.status.cluster) titleParts.push(state.status.cluster);
     const title = titleParts.join(" — ");
     document.title = title;
-    $("h1").textContent = title;
+    const h1 = document.querySelector("h1");
+    if (h1) h1.textContent = title;
     $("mode-chip").textContent = state.status.mode || "unknown";
     const db = state.status.db || {};
     $("db-chip").textContent = "db: " + (db.schemaVersion ? "v" + db.schemaVersion : "n/a")

@@ -33,6 +33,11 @@ spec:
           env:
             - name: DB_DIR
               value: /data/db
+            # shown in the execution logs and report title (optional)
+            - name: CUSTOMER_NAME
+              value: ""
+            - name: CLUSTER_NAME
+              value: ""
             - name: SCAN_INTERVAL
               value: "0"
             - name: CONCURRENCY

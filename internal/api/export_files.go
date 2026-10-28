@@ -3,6 +3,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -139,13 +140,28 @@ func (s *Server) ExportSBOMs(dir string) (int, error) {
 		if res.Status != scanner.StatusScanned || len(res.SBOM) == 0 {
 			continue
 		}
+		data, err := prettyJSON(res.SBOM)
+		if err != nil {
+			return written, fmt.Errorf("invalid SBOM JSON for %s: %w", res.Image, err)
+		}
 		path := filepath.Join(dir, imageFileName(res.Image)+".sbom.json")
-		if err := os.WriteFile(path, res.SBOM, 0o644); err != nil {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return written, err
 		}
 		written++
 	}
 	return written, nil
+}
+
+// prettyJSON validates that data is well-formed JSON and returns it indented
+// with two spaces per level, so exported scan files are readable and never
+// contain malformed JSON.
+func prettyJSON(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, data, "", "  "); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // ExportGrype writes one grype-shaped JSON report per scanned image into dir.

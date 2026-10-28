@@ -481,8 +481,12 @@ func TestExportSBOMsAndGrype(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read sbom file: %v (dir contents: %v)", err, mustGlob(t, dir))
 	}
-	if string(data) != `{"artifacts":[{"name":"nginx"}]}` {
-		t.Errorf("sbom content = %s", data)
+	if !json.Valid(data) {
+		t.Fatalf("sbom content is not valid JSON: %s", data)
+	}
+	want := "{\n  \"artifacts\": [\n    {\n      \"name\": \"nginx\"\n    }\n  ]\n}"
+	if string(data) != want {
+		t.Errorf("sbom content = %q, want %q", data, want)
 	}
 
 	gdir := t.TempDir()
@@ -537,6 +541,25 @@ func TestExportSBOMsAndGrype(t *testing.T) {
 	}
 	if report.Distro.Name != "debian" {
 		t.Errorf("distro = %+v", report.Distro)
+	}
+}
+
+func TestExportSBOMsRejectsInvalidJSON(t *testing.T) {
+	srv, store := testServer(t)
+	now := time.Now().UTC()
+	store.SetImages(append(store.Images(), "broken:1.0"))
+	store.Put(scanner.Result{
+		Image: "broken:1.0", Status: scanner.StatusScanned, ScannedAt: &now,
+		SBOM: []byte(`{"artifacts":[{"name":`), // truncated, not valid JSON
+	})
+
+	dir := t.TempDir()
+	_, err := srv.ExportSBOMs(dir)
+	if err == nil {
+		t.Fatal("ExportSBOMs succeeded with malformed SBOM, want error")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "broken_1.0.sbom.json")); !os.IsNotExist(statErr) {
+		t.Errorf("malformed SBOM file was written to disk (stat err = %v)", statErr)
 	}
 }
 

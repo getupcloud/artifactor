@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/anchore/grype/grype"
@@ -333,20 +334,22 @@ func (s *Scanner) RunOnce(ctx context.Context) error {
 
 	jobs := make(chan string)
 	var wg sync.WaitGroup
+	var progress atomic.Int64
 	for i := 0; i < s.opts.Concurrency; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for img := range jobs {
 				started := time.Now().UTC()
+				n := progress.Add(1)
 				s.opts.Store.MarkScanning(img, started)
-				s.logger.Printf("scanning %s ...", img)
+				s.logger.Printf("scanning %s ... (%d/%d)", img, n, len(disc.Images))
 				result := s.scanImage(ctx, img, disc.PullSecrets[img])
 				result.Instances = disc.Instances[img]
 				s.opts.Store.Put(result)
 				switch result.Status {
 				case StatusScanned:
-					s.logger.Printf("scanned %s: %d artifacts, %d CVE(s) in %s", img, len(result.Artifacts), len(result.Cves), time.Since(started).Round(time.Second))
+					s.logger.Printf("scanned %s: %d artifacts, %d CVE(s) in %s (%d/%d)", img, len(result.Artifacts), len(result.Cves), time.Since(started).Round(time.Second), n, len(disc.Images))
 				case StatusError:
 					s.logger.Printf("scan failed for %s: %s", img, result.Error)
 				}

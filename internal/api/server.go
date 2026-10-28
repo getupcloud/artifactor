@@ -46,8 +46,11 @@ type Options struct {
 	NamesJSON []byte // embedded contents of web/names.json (fallback list)
 	NamesURL  string // override for the GitHub fetch (defaults to defaultNamesURL; mainly for tests)
 	Mode      string // "in-cluster" or "kubeconfig"
-	K8sErr    error
-	DB        func() scanner.DBStatus // dynamic DB status (DB initializes in the background)
+	// Optional context shown in the report title and status payload.
+	CustomerName string
+	ClusterName  string
+	K8sErr       error
+	DB           func() scanner.DBStatus // dynamic DB status (DB initializes in the background)
 }
 
 // Server implements the HTTP API.
@@ -157,6 +160,8 @@ func (s *Server) statusPayload() map[string]any {
 		"k8sError":     errString(s.opts.K8sErr),
 		"scanning":     s.opts.Store.IsScanning(),
 		"lastScanDone": s.opts.Store.LastScanDone(),
+		"customer":     s.opts.CustomerName,
+		"cluster":      s.opts.ClusterName,
 		"db":           db,
 	}
 }

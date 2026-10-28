@@ -510,6 +510,8 @@ func TestExportAll(t *testing.T) {
 
 func TestStatusEndpoint(t *testing.T) {
 	srv, store := testServer(t)
+	srv.opts.CustomerName = "Acme"
+	srv.opts.ClusterName = "prod-eks"
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -519,6 +521,9 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 	if status["mode"] != "test" {
 		t.Errorf("mode = %v", status["mode"])
+	}
+	if status["customer"] != "Acme" || status["cluster"] != "prod-eks" {
+		t.Errorf("customer/cluster = %v/%v", status["customer"], status["cluster"])
 	}
 	store.SetDBError("boom")
 	rec = httptest.NewRecorder()

@@ -337,6 +337,12 @@ async function api(path) {
 async function refreshStatus() {
   try {
     state.status = await api("/api/status");
+    const titleParts = ["Artifactor"];
+    if (state.status.customer) titleParts.push(state.status.customer);
+    if (state.status.cluster) titleParts.push(state.status.cluster);
+    const title = titleParts.join(" — ");
+    document.title = title;
+    $("h1").textContent = title;
     $("mode-chip").textContent = state.status.mode || "unknown";
     const db = state.status.db || {};
     $("db-chip").textContent = "db: " + (db.schemaVersion ? "v" + db.schemaVersion : "n/a")

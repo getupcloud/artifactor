@@ -1,7 +1,8 @@
 # Build, package and deploy the artifactor.
 
-VERSION    ?= 0.0.7
-IMAGE      ?= ghcr.io/getupcloud/artifactor:$(VERSION)
+VERSION    ?= 0.0.10
+IMAGE_NAME ?= ghcr.io/getupcloud/artifactor
+IMAGE      ?= $(IMAGE_NAME):$(VERSION)
 REGISTRY   ?=
 NAMESPACE  ?= artifactor
 KUBECTL    ?= kubectl
@@ -13,16 +14,16 @@ FULL_IMAGE := $(IMAGE)
 endif
 
 .ONESHELL:
-.PHONY: help build test vet fmt run export docker-build docker-push deploy undeploy port-forward logs tidy clean
+.PHONY: help build test vet fmt run export bump docker-build docker-push deploy undeploy port-forward logs tidy clean
 
-bump:
+bump: ## Bump VERSION (Makefile) and the image tag (deploy/deployment.yaml)
 	@read -p 'Next version: ' -e -i "$(VERSION)" NEXT_VERSION
-	echo $$NEXT_VERSION
 	if [ "$(VERSION)" == "$$NEXT_VERSION" ]; then
 		echo "Error: same version"
 		exit 1
 	fi
-	sed -i -e "/^VERSION /s|$(VERSION)|$$NEXT_VERSION|" Makefile
+	sed -i -E 's|^(VERSION[[:space:]]*\?=[[:space:]]*).*|\1'"$$NEXT_VERSION"'|' Makefile
+	sed -i -E 's|(image:[[:space:]]*$(IMAGE_NAME):)[^ #]+|\1'"$$NEXT_VERSION"'|' deploy/deployment.yaml
 	git commit -m "Bump version $$NEXT_VERSION" Makefile
 
 help: ## Show this help

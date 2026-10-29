@@ -33,9 +33,10 @@ const (
 	openshiftTemplateName = "openshift.yaml.tmpl"
 	dbcaTemplateName      = "dbca.yaml.tmpl"
 	caBundlePlaceholder   = "__CA_BUNDLE__"
-	// dbCaCertMountPath is where the CA ConfigMap is mounted in the pod and
-	// what DB_CA_CERT points to.
-	dbCaCertMountPath = "/etc/artifactor/ca/ca.crt"
+	// The CA ConfigMap is mounted as a directory; the ca.crt key becomes
+	// dbCaCertMountPath, which DB_CA_CERT points to.
+	dbCaCertMountDir  = "/etc/artifactor/ca"
+	dbCaCertMountPath = dbCaCertMountDir + "/ca.crt"
 	// Default environment variables read by --image-token-env (in order)
 	// when no explicit variable name is given.
 	defaultTokenEnvA = "GH_TOKEN"
@@ -49,7 +50,7 @@ const (
 var (
 	dbCaMountMarker  = []byte("# DB_CA_MOUNT_PLACEHOLDER")
 	dbCaVolumeMarker = []byte("# DB_CA_VOLUME_PLACEHOLDER")
-	dbCaMountYAML    = []byte("            - name: db-ca\n              mountPath: " + dbCaCertMountPath + "\n              readOnly: true")
+	dbCaMountYAML    = []byte("            - name: db-ca\n              mountPath: " + dbCaCertMountDir + "\n              readOnly: true")
 	dbCaVolumeYAML   = []byte("        - name: db-ca\n          configMap:\n            name: artifactor-db-ca")
 )
 

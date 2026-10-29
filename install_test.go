@@ -174,7 +174,7 @@ func TestRenderManifestsDBCACert(t *testing.T) {
 		"    MIIBfakecert",
 		`value: "/etc/artifactor/ca/ca.crt"`,
 		"- name: db-ca",
-		"mountPath: /etc/artifactor/ca/ca.crt",
+		"mountPath: /etc/artifactor/ca",
 		"readOnly: true",
 		"configMap:",
 	} {

@@ -267,6 +267,7 @@ type Options struct {
 	Provider    vulnerability.Provider // initial grype vulnerability DB provider (may be nil; set later via SetProvider)
 	ECR         *ecr.Provider          // AWS ECR credential provider via the AWS chain/IRSA (nil disables)
 	KeepSBOM    bool                   // retain the encoded syft SBOM per image in memory (needed by --export-sbom)
+	Insecure    bool                   // skip TLS certificate verification when pulling images (self-signed registry certs)
 	Platform    string
 	Timeout     time.Duration
 	Concurrency int
@@ -425,8 +426,11 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 	sbomCfg := syft.DefaultCreateSBOMConfig()
 	packages, pkgContext, sbo, err := pkg.Provide(imageRef, pkg.ProviderConfig{
 		SyftProviderConfig: pkg.SyftProviderConfig{
-			SBOMOptions:            sbomCfg,
-			RegistryOptions:        &image.RegistryOptions{Credentials: credentials},
+			SBOMOptions: sbomCfg,
+			RegistryOptions: &image.RegistryOptions{
+				Credentials:           credentials,
+				InsecureSkipTLSVerify: s.opts.Insecure,
+			},
 			Platform:               s.opts.Platform,
 			DefaultImagePullSource: "registry",
 		},

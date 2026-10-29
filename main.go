@@ -97,6 +97,7 @@ func runScanCmd(args []string) {
 		openReport   = fs.String("open", envStr("OPEN", ""), "open the exported scan.html with this command after --export (default \"xdg-open\"; ${FILE} is replaced by the path)")
 		ecrAuth      = fs.Bool("ecr-auth", envBool("ECR_AUTH", true), "authenticate to AWS ECR registries via the AWS credential chain (IRSA) when no pull secret matches")
 		keepSBOM     = fs.Bool("keep-sbom", envBool("KEEP_SBOM", true), "keep the syft SBOM of each image in memory (needed by --export-sbom; disable to save memory)")
+		insecure     = fs.Bool("insecure-skip-tls", envBool("INSECURE_SKIP_TLS", false), "skip TLS certificate verification for remote servers (image registries and the vulnerability-name refresh)")
 		customerName = fs.String("customer-name", os.Getenv("CUSTOMER_NAME"), "customer name shown in the execution logs and report title")
 		clusterName  = fs.String("cluster-name", os.Getenv("CLUSTER_NAME"), "cluster name shown in the execution logs and report title")
 		showVersion  = fs.Bool("version", false, "print version and exit")
@@ -133,7 +134,7 @@ func runScanCmd(args []string) {
 			grypeDir: *exportGrype,
 			allDir:   *exportAll,
 			csvPath:  *exportCSV,
-		}, *dbDir, *dbUpdate, *fromSBOM, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *keepSBOM, *customerName, *clusterName, *openReport)
+		}, *dbDir, *dbUpdate, *fromSBOM, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *keepSBOM, *insecure, *customerName, *clusterName, *openReport)
 		if err != nil {
 			log.Fatalf("export: %v", err)
 		}
@@ -171,6 +172,7 @@ func runScanCmd(args []string) {
 			FromSBOM:    *fromSBOM,
 			ECR:         ecrProvider,
 			KeepSBOM:    *keepSBOM,
+			Insecure:    *insecure,
 			Platform:    *platform,
 			Timeout:     *scanTimeout,
 			Concurrency: *concurrency,
@@ -188,6 +190,7 @@ func runScanCmd(args []string) {
 		NamesJSON:    namesJSON,
 		Mode:         mode,
 		K8sErr:       k8sErr,
+		Insecure:     *insecure,
 		CustomerName: *customerName,
 		ClusterName:  *clusterName,
 		DB: func() scanner.DBStatus {
@@ -333,7 +336,7 @@ type exportRequest struct {
 
 // runExport implements the --export* flags: prepare the DB, scan every image
 // once, write the requested artifacts, and exit.
-func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, fromSBOM string, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, keepSBOM bool, customerName, clusterName, openCmd string) error {
+func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, fromSBOM string, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, keepSBOM, insecure bool, customerName, clusterName, openCmd string) error {
 	var k8sClient *k8s.Client
 	mode := "from-sbom"
 	if fromSBOM == "" {
@@ -374,6 +377,7 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		Provider:    provider,
 		ECR:         ecrProvider,
 		KeepSBOM:    keepSBOM,
+		Insecure:    insecure,
 		Platform:    platform,
 		Timeout:     scanTimeout,
 		Concurrency: concurrency,
@@ -395,6 +399,7 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		SPA:          spaHTML,
 		NamesJSON:    namesJSON,
 		Mode:         mode,
+		Insecure:     insecure,
 		CustomerName: customerName,
 		ClusterName:  clusterName,
 		DB:           func() scanner.DBStatus { return dbStatus },

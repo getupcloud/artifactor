@@ -254,6 +254,26 @@ func TestFetchNamedVulns(t *testing.T) {
 	if len(groups) != 1 || groups[0]["name"] != "NewShell" {
 		t.Fatalf("groups after later failed fetch = %v", groups)
 	}
+
+	// TLS with a self-signed cert: fails by default, works with --insecure
+	tlsRemote := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"name":"TLSShell","cves":["CVE-2"]}]`))
+	}))
+	defer tlsRemote.Close()
+	srv.opts.Insecure = false
+	srv.opts.NamesURL = tlsRemote.URL
+	if err := srv.FetchNamedVulns(context.Background()); err == nil {
+		t.Fatal("expected TLS verification error without --insecure")
+	}
+	srv.opts.Insecure = true
+	if err := srv.FetchNamedVulns(context.Background()); err != nil {
+		t.Fatalf("fetch over TLS with --insecure: %v", err)
+	}
+	groups = getJSON(t, srv.Handler(), "/api/named-vulns")
+	if len(groups) != 1 || groups[0]["name"] != "TLSShell" {
+		t.Fatalf("groups after TLS fetch = %v", groups)
+	}
+	srv.opts.Insecure = false
 }
 
 func TestNamedVulnsEndpoint(t *testing.T) {

@@ -6,6 +6,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -48,6 +49,7 @@ type Options struct {
 	NamesJSON []byte // embedded contents of web/names.json (fallback list)
 	NamesURL  string // override for the GitHub fetch (defaults to defaultNamesURL; mainly for tests)
 	Mode      string // "in-cluster" or "kubeconfig"
+	Insecure  bool   // skip TLS certificate verification for the names.json refresh
 	// Optional context shown in the report title and status payload.
 	CustomerName string
 	ClusterName  string
@@ -86,7 +88,14 @@ func (s *Server) FetchNamedVulns(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client := http.DefaultClient
+	if s.opts.Insecure {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		// #nosec G402 -- explicit --insecure opt-in (self-signed servers)
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		client = &http.Client{Transport: transport}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

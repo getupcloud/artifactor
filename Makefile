@@ -6,6 +6,10 @@ IMAGE      ?= $(IMAGE_NAME):$(VERSION)
 REGISTRY   ?=
 NAMESPACE  ?= artifactor
 KUBECTL    ?= kubectl
+BIN_DIR    ?= ~/bin
+BIN        ?= bin/artifactor
+SOURCES    := go.mod go.sum *.go $(shell find internal -name '*.go' -type f) $(shell find web -type f)
+
 
 ifneq ($(REGISTRY),)
 FULL_IMAGE := $(REGISTRY)/$(IMAGE)
@@ -19,8 +23,10 @@ endif
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
 
-build: ## Compile the binary locally
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/artifactor .
+build: $(BIN) ## Compile the binary locally
+
+$(BIN): $(SOURCES)
+	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $@ .
 
 test: ## Run unit tests
 	go test ./... -count=1
@@ -53,6 +59,9 @@ release:
 
 gitleaks: ## Avoid secrets to leak
 	gitleaks git && gitleaks dir
+
+install: build
+	install -m=0766 $(BIN) $(BIN_DIR)/$(notdir $(BIN))
 
 docker-build: ## Build multi-arch container images locally (snapshot, no push; requires goreleaser + buildx)
 	goreleaser release --clean --snapshot

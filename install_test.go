@@ -10,7 +10,7 @@ import (
 )
 
 func TestRenderManifests(t *testing.T) {
-	data, err := renderManifests("", "")
+	data, err := renderManifests("", "", "artifactor", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,8 +40,29 @@ func TestRenderManifests(t *testing.T) {
 	}
 }
 
+func TestRenderManifestsNamespace(t *testing.T) {
+	data, err := renderManifests("", "", "team-a", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "namespace: artifactor") {
+		t.Error("rendered manifests still reference the artifactor namespace")
+	}
+	if !strings.Contains(text, "namespace: team-a") {
+		t.Error("rendered manifests missing namespace: team-a")
+	}
+	// the Namespace object itself is renamed, resource names are not
+	if !strings.Contains(text, "name: team-a") {
+		t.Error("namespace.yaml was not renamed to team-a")
+	}
+	if !strings.Contains(text, "name: artifactor") {
+		t.Error("resource names must keep the artifactor prefix")
+	}
+}
+
 func TestRenderManifestsImageOverride(t *testing.T) {
-	data, err := renderManifests("registry.example.com/team/artifactor:v9", "")
+	data, err := renderManifests("registry.example.com/team/artifactor:v9", "", "artifactor", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +72,45 @@ func TestRenderManifestsImageOverride(t *testing.T) {
 	}
 	if strings.Contains(text, "ghcr.io/getupcloud/artifactor:0.0.1") {
 		t.Error("original image still present after override")
+	}
+}
+
+func TestRenderManifestsNamesEnv(t *testing.T) {
+	data, err := renderManifests("", "", "artifactor", "Acme Corp", "prod-eks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"- name: CUSTOMER_NAME",
+		`value: "Acme Corp"`,
+		"- name: CLUSTER_NAME",
+		`value: "prod-eks"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("deployment env missing %q", want)
+		}
+	}
+	if strings.Contains(text, `value: ""`) {
+		t.Error("default empty env values still present after override")
+	}
+
+	// unset flags leave the manifest defaults alone
+	data, err = renderManifests("", "", "artifactor", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), `value: ""`); got != 2 {
+		t.Errorf("default empty env values = %d, want 2 (CUSTOMER_NAME + CLUSTER_NAME)", got)
+	}
+
+	// quotes and backslashes in the value are escaped
+	data, err = renderManifests("", "", "artifactor", `Acme "X"\Y`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `value: "Acme \"X\"\\Y"`) {
+		t.Error("env value was not YAML-escaped")
 	}
 }
 
@@ -98,7 +158,7 @@ func TestRenderManifestsWithSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := renderManifests("", secretData)
+	data, err := renderManifests("", secretData, "artifactor", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +201,23 @@ func TestInstallDump(t *testing.T) {
 	})
 	if !strings.Contains(out, "image: img:v1") {
 		t.Error("uninstall --dump --image did not apply the override")
+	}
+
+	out = captureStdout(t, func() {
+		runInstallCmd("install", []string{"--dump", "--namespace", "team-a"})
+	})
+	if !strings.Contains(out, "namespace: team-a") || strings.Contains(out, "namespace: artifactor") {
+		t.Error("install --dump --namespace did not rewrite the manifests")
+	}
+	if !strings.Contains(out, "name: team-a") {
+		t.Error("install --dump --namespace did not rename the Namespace object")
+	}
+
+	out = captureStdout(t, func() {
+		runInstallCmd("install", []string{"--dump", "--customer-name", "Acme Corp", "--cluster-name", "prod"})
+	})
+	if !strings.Contains(out, `value: "Acme Corp"`) || !strings.Contains(out, `value: "prod"`) {
+		t.Error("install --dump --customer-name/--cluster-name did not set the deployment env")
 	}
 
 	t.Setenv("GH_TOKEN", "tok123")

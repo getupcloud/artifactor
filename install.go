@@ -36,6 +36,20 @@ const (
 
 var deploymentImagePattern = regexp.MustCompile(`(?m)^(\s+image:\s*)\S+.*$`)
 
+// namespaceFieldPattern matches the namespace field of every namespaced
+// manifest (including the subject of the ClusterRoleBinding); resource
+// names, labels and the serviceAccountName are deliberately left alone.
+var namespaceFieldPattern = regexp.MustCompile(`(?m)^(\s*namespace:\s*)artifactor\s*$`)
+
+// setDeploymentEnv replaces the value of a single env entry of the
+// deployment manifest with a double-quoted YAML scalar.
+func setDeploymentEnv(data []byte, name, value string) []byte {
+	pattern := regexp.MustCompile(`(?m)^(\s+- name: ` + regexp.QuoteMeta(name) + `\n\s+value: ).*$`)
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	return pattern.ReplaceAll(data, []byte(`${1}"`+value+`"`))
+}
+
 // manifestRank defines the rendering order: the namespace first, then the
 // imagePullSecret template (so the secret exists before the deployment that
 // references it), then the remaining manifests alphabetically.
@@ -73,10 +87,12 @@ func dockerConfigSecretData(token string) (string, error) {
 }
 
 // renderManifests returns the deploy manifests concatenated (separated by
-// ---), optionally overriding the container image of the deployment. The
-// imagePullSecret template is included only when secretData is non-empty
-// (rendered first, before the deployment that references it).
-func renderManifests(image, secretData string) ([]byte, error) {
+// ---), optionally overriding the container image of the deployment, the
+// namespace of every namespaced manifest, and the CUSTOMER_NAME/CLUSTER_NAME
+// env values of the deployment. The imagePullSecret template is included
+// only when secretData is non-empty (rendered first, before the deployment
+// that references it).
+func renderManifests(image, secretData, namespace, customerName, clusterName string) ([]byte, error) {
 	entries, err := manifestsFS.ReadDir("deploy")
 	if err != nil {
 		return nil, err
@@ -108,6 +124,18 @@ func renderManifests(image, secretData string) ([]byte, error) {
 			if image != "" {
 				data = deploymentImagePattern.ReplaceAll(data, []byte("${1}"+image))
 			}
+			if customerName != "" {
+				data = setDeploymentEnv(data, "CUSTOMER_NAME", customerName)
+			}
+			if clusterName != "" {
+				data = setDeploymentEnv(data, "CLUSTER_NAME", clusterName)
+			}
+		}
+		if namespace != "" {
+			data = namespaceFieldPattern.ReplaceAll(data, []byte("${1}"+namespace))
+			if entry.Name() == "namespace.yaml" {
+				data = bytes.ReplaceAll(data, []byte("name: artifactor"), []byte("name: "+namespace))
+			}
 		}
 		buf.Write(bytes.TrimRight(data, "\n"))
 		buf.WriteString("\n---\n")
@@ -120,14 +148,20 @@ func runInstallCmd(action string, args []string) {
 	fs := flag.NewFlagSet("artifactor "+action, flag.ExitOnError)
 	dump := fs.Bool("dump", false, "only print the manifests to stdout without applying them")
 	image := fs.String("image", "", "override the container image in the deployment manifest")
+	namespace := fs.String("namespace", "artifactor", "namespace to install the manifests into")
+	customerName := fs.String("customer-name", "", "set the CUSTOMER_NAME env of the deployment (shown in the execution logs and report title)")
+	clusterName := fs.String("cluster-name", "", "set the CLUSTER_NAME env of the deployment (shown in the execution logs and report title)")
 	imageTokenEnv := fs.String("image-token-env", "", "read a registry token from this environment variable (default: GH_TOKEN, then GITHUB_TOKEN) and include the artifactor-docker-image-token imagePullSecret manifest")
 	fs.Lookup("image-token-env").NoOptDefVal = "auto"
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: artifactor %s [--dump] [--image <ref>] [--image-token-env[=VAR]]\n", action)
+		fmt.Fprintf(os.Stderr, "Usage: artifactor %s [--dump] [--image <ref>] [--namespace <ns>] [--customer-name <name>] [--cluster-name <name>] [--image-token-env[=VAR]]\n", action)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
+	}
+	if *namespace == "" {
+		log.Fatalf("%s: --namespace cannot be empty", action)
 	}
 
 	secretData := ""
@@ -153,7 +187,7 @@ func runInstallCmd(action string, args []string) {
 		secretData = s
 	}
 
-	data, err := renderManifests(*image, secretData)
+	data, err := renderManifests(*image, secretData, *namespace, *customerName, *clusterName)
 	if err != nil {
 		log.Fatalf("%s: render manifests: %v", action, err)
 	}

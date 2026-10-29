@@ -174,7 +174,7 @@ tr.expand-row:hover td { background: var(--bg); }
   <span class="spacer"></span>
   <button class="secondary" id="export-btn" title="Download this report as a single self-contained HTML file">HTML</button>
   <button class="secondary" id="csv-btn" title="Download the CVE report (current filters) as CSV">CSV</button>
-  <button id="scan-btn" title="Scan every image in the cluster">Scan now</button>
+  <button id="scan-btn" title="Scan every image in the cluster" disabled>Scan now</button>
 </header>
 
 <div class="banner" id="banner"></div>
@@ -240,7 +240,7 @@ tr.expand-row:hover td { background: var(--bg); }
         </thead>
         <tbody id="cve-tbody"></tbody>
       </table>
-      <div class="empty" id="empty-msg">Click "Scan now" to scan the cluster images.</div>
+      <div class="empty" id="empty-msg">Loading scan</div>
     </div>
   </main>
 </div>
@@ -253,7 +253,8 @@ const SEVS = ["critical", "high", "medium", "low", "negligible", "unknown"];
 
 // Offline export mode: the server (or --export) replaces the marker above
 // either with an inline <script id="__artifactor_data" type="application/json">
-// block or with <script src="scan-data-N.js"></script> tags. Each data chunk
+// block or with a scan-data-N.js script tag (written <\/script> here so the
+// literal sequence does not close this element mid-comment). Each data chunk
 // file pushes one minified JSON object into window.__artifactor_data_parts
 // (external files also load when the report is opened locally via file://).
 // When a snapshot is present, all API calls are answered from it, so the
@@ -338,6 +339,7 @@ const state = {
   status: null,
   imageSearch: "",
   lastQuery: null,     // /api/cves query string of the last render
+  loaded: false,       // first CVE load finished (scan button enabled from here on)
 };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
@@ -378,7 +380,7 @@ async function refreshStatus() {
       if (problems.length) { banner.textContent = problems.join("\n"); banner.classList.add("show"); }
       else banner.classList.remove("show");
     }
-    $("scan-btn").disabled = state.status.scanning;
+    $("scan-btn").disabled = state.status.scanning || !state.loaded;
   } catch (e) { /* server restarting */ }
 }
 
@@ -470,8 +472,12 @@ async function loadCVEs() {
 
   const tbody = $("cve-tbody");
   tbody.innerHTML = "";
+  state.loaded = true;
+  const scanning = !!(state.status && state.status.scanning);
   $("empty-msg").style.display = rows.length ? "none" : "block";
-  $("empty-msg").textContent = rows.length === 0 ? "No CVEs match the current filters." : "";
+  $("empty-msg").textContent = rows.length === 0
+    ? (scanning ? "Loading scan" : "No CVEs match the current filters.")
+    : "";
   $("cve-count").textContent = rows.length + " CVE(s)";
   $("th-image").style.display = state.selected ? "none" : "";
 
@@ -623,6 +629,13 @@ async function loadArtifacts() {
 /* ---------- actions ---------- */
 
 $("scan-btn").onclick = async () => {
+  // disable immediately and show the loading state in the CVE list (if it
+  // has nothing to show yet) until the status poll confirms the scan
+  $("scan-btn").disabled = true;
+  if (!state.lastCVERows || !state.lastCVERows.length) {
+    $("empty-msg").textContent = "Loading scan";
+    $("empty-msg").style.display = "block";
+  }
   try { await fetch("/api/scan", { method: "POST" }); }
   catch { /* server restarting */ }
   refreshStatus();

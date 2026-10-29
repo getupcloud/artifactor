@@ -47,6 +47,10 @@ bump: gitleaks ## Bump VERSION (Makefile) and the image tag (deploy/deployment.y
 	sed -i -E 's|(image:[[:space:]]*$(IMAGE_NAME):)[^ #]+|\1'"$$NEXT_VERSION"'|' deploy/deployment.yaml
 	git commit -m "Bump version $$NEXT_VERSION" Makefile deploy/deployment.yaml
 
+release:
+	@read -p 'gh workflow run release ? [Y/n]: ' res
+	[ "$${res,,}" == y -o "$${res}" == '' ] && gh workflow run release || true
+
 gitleaks: ## Avoid secrets to leak
 	gitleaks git && gitleaks dir
 

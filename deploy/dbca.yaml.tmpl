@@ -1,0 +1,11 @@
+# ConfigMap carrying the CA certificate that authenticates the grype
+# vulnerability DB download server. Included by
+# `artifactor install --db-ca-cert <path>` and mounted into the deployment.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: artifactor-db-ca
+  namespace: artifactor
+data:
+  ca.crt: |
+__CA_BUNDLE__

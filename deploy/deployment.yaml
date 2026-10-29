@@ -53,6 +53,10 @@ spec:
             # drop the per-image SBOM bytes to save memory
             - name: KEEP_SBOM
               value: "false"
+            # path to a PEM CA certificate for the grype DB download server
+            # (set by `install --db-ca-cert`)
+            - name: DB_CA_CERT
+              value: ""
           resources:
             requests:
               cpu: 100m
@@ -79,6 +83,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data # writable dir for the grype vulnerability DB and scan temp files
+# DB_CA_MOUNT_PLACEHOLDER
       volumes:
         - name: data
           emptyDir: {}
+# DB_CA_VOLUME_PLACEHOLDER

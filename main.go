@@ -85,6 +85,7 @@ func runScanCmd(args []string) {
 		concurrency  = fs.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
 		dbDir        = fs.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
 		dbUpdate     = fs.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")
+		dbCaCert     = fs.String("db-ca-cert", envStr("DB_CA_CERT", ""), "path to a PEM CA certificate used to verify the grype DB download server (instead of the system roots)")
 		fromSBOM     = fs.String("from-sbom", envStr("FROM_SBOM", ""), "scan an SBOM file or all files of a directory (non-recursive) with grype only, skipping syft and image download")
 		dbRefresh    = fs.Duration("db-refresh-interval", envDuration("DB_REFRESH_INTERVAL", 24*time.Hour), "check for grype DB updates on this interval while running (0 disables)")
 		platform     = fs.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
@@ -134,7 +135,7 @@ func runScanCmd(args []string) {
 			grypeDir: *exportGrype,
 			allDir:   *exportAll,
 			csvPath:  *exportCSV,
-		}, *dbDir, *dbUpdate, *fromSBOM, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *keepSBOM, *insecure, *customerName, *clusterName, *openReport)
+		}, *dbDir, *dbUpdate, *dbCaCert, *fromSBOM, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *keepSBOM, *insecure, *customerName, *clusterName, *openReport)
 		if err != nil {
 			log.Fatalf("export: %v", err)
 		}
@@ -228,7 +229,7 @@ func runScanCmd(args []string) {
 	go func() {
 		defer close(dbDone)
 		log.Printf("preparing grype vulnerability database at %s (first run downloads the DB) ...", *dbDir)
-		provider, status, dbErr := scanner.NewProvider(*dbDir, version, *dbUpdate)
+		provider, status, dbErr := scanner.NewProvider(*dbDir, version, *dbUpdate, *dbCaCert)
 		dbMu.Lock()
 		dbStatus = status
 		dbMu.Unlock()
@@ -264,7 +265,7 @@ func runScanCmd(args []string) {
 				return
 			case <-t.C:
 				log.Print("checking for vulnerability DB update ...")
-				updated, provider, status, err := scanner.RefreshDB(*dbDir, version)
+				updated, provider, status, err := scanner.RefreshDB(*dbDir, version, *dbCaCert)
 				if err != nil {
 					// keep the current (still usable) DB; just log the failure
 					log.Printf("WARNING: vulnerability DB refresh failed: %v", err)
@@ -336,7 +337,7 @@ type exportRequest struct {
 
 // runExport implements the --export* flags: prepare the DB, scan every image
 // once, write the requested artifacts, and exit.
-func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, fromSBOM string, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, keepSBOM, insecure bool, customerName, clusterName, openCmd string) error {
+func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, dbCaCert, fromSBOM string, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, keepSBOM, insecure bool, customerName, clusterName, openCmd string) error {
 	var k8sClient *k8s.Client
 	mode := "from-sbom"
 	if fromSBOM == "" {
@@ -351,7 +352,7 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 	}
 
 	log.Printf("preparing grype vulnerability database at %s ...", dbDir)
-	provider, dbStatus, dbErr := scanner.NewProvider(dbDir, version, dbUpdate)
+	provider, dbStatus, dbErr := scanner.NewProvider(dbDir, version, dbUpdate, dbCaCert)
 	if dbErr != nil {
 		log.Printf("WARNING: vulnerability database: %v (images will be scanned but CVE matching will fail)", dbErr)
 	}

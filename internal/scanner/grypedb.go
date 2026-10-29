@@ -21,8 +21,9 @@ type DBStatus struct {
 
 // newCurator builds the grype DB curator for dbRoot, configured so that a
 // stale database is preferred over no database and updates come from the
-// default anchore distribution endpoint.
-func newCurator(dbRoot, appVersion string) (dbv6.Curator, error) {
+// default anchore distribution endpoint. A non-empty caCert (path to a PEM
+// file) is used to verify the download server instead of the system roots.
+func newCurator(dbRoot, appVersion, caCert string) (dbv6.Curator, error) {
 	cfg := installation.DefaultConfig(clio.Identification{Name: "artifactor", Version: appVersion})
 	cfg.DBRootDir = dbRoot
 	cfg.ValidateAge = false // a stale DB is better than no DB
@@ -30,6 +31,7 @@ func newCurator(dbRoot, appVersion string) (dbv6.Curator, error) {
 
 	clientCfg := distribution.DefaultConfig()
 	clientCfg.ID = clio.Identification{Name: "artifactor", Version: appVersion}
+	clientCfg.CACert = caCert
 	client, err := distribution.NewClient(clientCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create db client: %w", err)
@@ -41,10 +43,10 @@ func newCurator(dbRoot, appVersion string) (dbv6.Curator, error) {
 // a vulnerability provider backed by it. With autoUpdate enabled the latest
 // database is downloaded when missing or when an update check is due; an
 // existing database is still used if the update fails (e.g. no network).
-func NewProvider(dbRoot, appVersion string, autoUpdate bool) (vulnerability.Provider, DBStatus, error) {
+func NewProvider(dbRoot, appVersion string, autoUpdate bool, caCert string) (vulnerability.Provider, DBStatus, error) {
 	status := DBStatus{Dir: dbRoot}
 
-	curator, err := newCurator(dbRoot, appVersion)
+	curator, err := newCurator(dbRoot, appVersion, caCert)
 	if err != nil {
 		return nil, status, fmt.Errorf("create db curator: %w", err)
 	}
@@ -74,10 +76,10 @@ func NewProvider(dbRoot, appVersion string, autoUpdate bool) (vulnerability.Prov
 // returning a fresh provider backed by the (possibly updated) database. The
 // provider is non-nil only when a usable DB is available afterwards; on
 // failure callers should keep their previous provider.
-func RefreshDB(dbRoot, appVersion string) (updated bool, provider vulnerability.Provider, status DBStatus, err error) {
+func RefreshDB(dbRoot, appVersion string, caCert string) (updated bool, provider vulnerability.Provider, status DBStatus, err error) {
 	status = DBStatus{Dir: dbRoot}
 
-	curator, err := newCurator(dbRoot, appVersion)
+	curator, err := newCurator(dbRoot, appVersion, caCert)
 	if err != nil {
 		return false, nil, status, fmt.Errorf("create db curator: %w", err)
 	}

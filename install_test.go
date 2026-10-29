@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestRenderManifests(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "", "", false)
+	data, err := renderManifests("", "", "artifactor", "", "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +42,7 @@ func TestRenderManifests(t *testing.T) {
 }
 
 func TestRenderManifestsNamespace(t *testing.T) {
-	data, err := renderManifests("", "", "team-a", "", "", false)
+	data, err := renderManifests("", "", "team-a", "", "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +63,7 @@ func TestRenderManifestsNamespace(t *testing.T) {
 }
 
 func TestRenderManifestsImageOverride(t *testing.T) {
-	data, err := renderManifests("registry.example.com/team/artifactor:v9", "", "artifactor", "", "", false)
+	data, err := renderManifests("registry.example.com/team/artifactor:v9", "", "artifactor", "", "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +77,7 @@ func TestRenderManifestsImageOverride(t *testing.T) {
 }
 
 func TestRenderManifestsNamesEnv(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "Acme Corp", "prod-eks", false)
+	data, err := renderManifests("", "", "artifactor", "Acme Corp", "prod-eks", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,21 +92,22 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 			t.Errorf("deployment env missing %q", want)
 		}
 	}
-	if strings.Contains(text, `value: ""`) {
-		t.Error("default empty env values still present after override")
+	// only DB_CA_CERT remains empty (the CA is configured by --db-ca-cert)
+	if got := strings.Count(text, `value: ""`); got != 1 {
+		t.Errorf("empty env values after override = %d, want 1 (DB_CA_CERT)", got)
 	}
 
 	// unset flags leave the manifest defaults alone
-	data, err = renderManifests("", "", "artifactor", "", "", false)
+	data, err = renderManifests("", "", "artifactor", "", "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(string(data), `value: ""`); got != 2 {
-		t.Errorf("default empty env values = %d, want 2 (CUSTOMER_NAME + CLUSTER_NAME)", got)
+	if got := strings.Count(string(data), `value: ""`); got != 3 {
+		t.Errorf("default empty env values = %d, want 3 (CUSTOMER_NAME + CLUSTER_NAME + DB_CA_CERT)", got)
 	}
 
 	// quotes and backslashes in the value are escaped
-	data, err = renderManifests("", "", "artifactor", `Acme "X"\Y`, "", false)
+	data, err = renderManifests("", "", "artifactor", `Acme "X"\Y`, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +118,7 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 
 func TestRenderManifestsOpenshift(t *testing.T) {
 	// without --openshift the SCC manifests are not rendered
-	data, err := renderManifests("", "", "artifactor", "", "", false)
+	data, err := renderManifests("", "", "artifactor", "", "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +127,7 @@ func TestRenderManifestsOpenshift(t *testing.T) {
 	}
 
 	// with --openshift they are, and the subject namespace follows --namespace
-	data, err = renderManifests("", "", "team-a", "", "", true)
+	data, err = renderManifests("", "", "team-a", "", "", true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +146,44 @@ func TestRenderManifestsOpenshift(t *testing.T) {
 	}
 	if strings.Contains(text, "namespace: artifactor") {
 		t.Error("openshift manifests still reference the artifactor namespace")
+	}
+}
+
+func TestRenderManifestsDBCACert(t *testing.T) {
+	// without the CA data the ConfigMap is not rendered and the deployment
+	// keeps the empty DB_CA_CERT env
+	data, err := renderManifests("", "", "artifactor", "", "", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "kind: ConfigMap") {
+		t.Error("DB CA ConfigMap included without caCertData")
+	}
+
+	pem := "-----BEGIN CERTIFICATE-----\nMIIBfakecert\n-----END CERTIFICATE-----"
+	data, err = renderManifests("", "", "team-a", "", "", false, pem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"kind: ConfigMap",
+		"name: artifactor-db-ca",
+		"namespace: team-a",
+		"    -----BEGIN CERTIFICATE-----",
+		"    MIIBfakecert",
+		`value: "/etc/artifactor/ca/ca.crt"`,
+		"- name: db-ca",
+		"mountPath: /etc/artifactor/ca/ca.crt",
+		"readOnly: true",
+		"configMap:",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("db-ca manifests missing %q", want)
+		}
+	}
+	if strings.Contains(text, "DB_CA_MOUNT_PLACEHOLDER") || strings.Contains(text, "DB_CA_VOLUME_PLACEHOLDER") {
+		t.Error("deployment placeholders not replaced with the CA volume/mount")
 	}
 }
 
@@ -191,7 +231,7 @@ func TestRenderManifestsWithSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := renderManifests("", secretData, "artifactor", "", "", false)
+	data, err := renderManifests("", secretData, "artifactor", "", "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,6 +298,18 @@ func TestInstallDump(t *testing.T) {
 	})
 	if !strings.Contains(out, "kind: SecurityContextConstraints") || !strings.Contains(out, "name: artifactor-scc") {
 		t.Error("install --dump --openshift did not include the SCC manifests")
+	}
+
+	pemFile := filepath.Join(t.TempDir(), "ca.crt")
+	if err := os.WriteFile(pemFile, []byte("-----BEGIN CERTIFICATE-----\nFAKECERT\n-----END CERTIFICATE-----"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out = captureStdout(t, func() {
+		runInstallCmd("install", []string{"--dump", "--db-ca-cert", pemFile})
+	})
+	if !strings.Contains(out, "kind: ConfigMap") || !strings.Contains(out, "name: artifactor-db-ca") ||
+		!strings.Contains(out, "    FAKECERT") || !strings.Contains(out, `value: "/etc/artifactor/ca/ca.crt"`) {
+		t.Error("install --dump --db-ca-cert did not embed the CA ConfigMap and configure the deployment")
 	}
 
 	t.Setenv("GH_TOKEN", "tok123")

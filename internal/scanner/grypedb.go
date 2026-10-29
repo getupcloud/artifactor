@@ -24,6 +24,8 @@ type DBStatus struct {
 // default anchore distribution endpoint. A non-empty caCert (path to a PEM
 // file) is used to verify the download server instead of the system roots.
 func newCurator(dbRoot, appVersion, caCert string) (dbv6.Curator, error) {
+	installGrypeLogger() // show the DB download/update progress via logx
+
 	cfg := installation.DefaultConfig(clio.Identification{Name: "artifactor", Version: appVersion})
 	cfg.DBRootDir = dbRoot
 	cfg.ValidateAge = false // a stale DB is better than no DB

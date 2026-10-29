@@ -4,6 +4,7 @@ go 1.27.3
 
 require (
 	github.com/anchore/clio v0.1.1
+	github.com/anchore/go-logger v0.2.0
 	github.com/anchore/grype v0.121.0
 	github.com/anchore/stereoscope v0.3.4
 	github.com/anchore/syft v1.55.0
@@ -50,7 +51,6 @@ require (
 	github.com/anchore/fangs v0.1.1 // indirect
 	github.com/anchore/go-collections v0.1.1 // indirect
 	github.com/anchore/go-homedir v0.1.1 // indirect
-	github.com/anchore/go-logger v0.2.0 // indirect
 	github.com/anchore/go-lzo v0.1.1 // indirect
 	github.com/anchore/go-macholibre v0.1.1 // indirect
 	github.com/anchore/go-rpmdb v0.2.2 // indirect

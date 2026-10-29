@@ -10,8 +10,8 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"github.com/getupcloud/artifactor/internal/logx"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -80,7 +80,7 @@ func (s *Server) FetchNamedVulns(ctx context.Context) error {
 	if url == "" {
 		url = defaultNamesURL
 	}
-	log.Printf("downloading named vulnerabilities list from %s ...", url)
+	logx.Infof("downloading named vulnerabilities list from %s ...", url)
 	ctx, cancel := context.WithTimeout(ctx, namesFetchTimeout)
 	defer cancel()
 	start := time.Now()
@@ -114,7 +114,7 @@ func (s *Server) FetchNamedVulns(ctx context.Context) error {
 	s.namedMu.Lock()
 	s.namedVulns = groups
 	s.namedMu.Unlock()
-	log.Printf("named vulnerabilities list downloaded: %d bytes, %d entrie(s) in %s", len(data), len(groups), time.Since(start).Round(time.Millisecond))
+	logx.Infof("named vulnerabilities list downloaded: %d bytes, %d entrie(s) in %s", len(data), len(groups), time.Since(start).Round(time.Millisecond))
 	return nil
 }
 

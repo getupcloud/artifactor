@@ -2,13 +2,13 @@ package scanner
 
 import (
 	"context"
-	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/getupcloud/artifactor/internal/logx"
 )
 
 // minimalSyftJSON is a small but valid syft-json SBOM (pre-v9 source target
@@ -133,10 +133,12 @@ func TestScanSBOMFileSkipsSyft(t *testing.T) {
 	dir := t.TempDir()
 	path := writeMinimalSBOM(t, dir, "alpine.sbom.json")
 
+	logx.Set(logx.LevelErr) // silence the decode warnings of this test
+	defer logx.Set(logx.LevelInfo)
+
 	s := New(Options{
 		Store:   NewStore(),
 		Timeout: time.Minute,
-		Logger:  log.New(io.Discard, "", 0),
 	})
 	// No provider set: decoding, naming and artifact extraction must still
 	// happen; only the grype matching step reports the missing DB.

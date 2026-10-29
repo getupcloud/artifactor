@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -34,6 +33,7 @@ import (
 
 	"github.com/getupcloud/artifactor/internal/ecr"
 	"github.com/getupcloud/artifactor/internal/k8s"
+	"github.com/getupcloud/artifactor/internal/logx"
 	"github.com/getupcloud/artifactor/internal/registryauth"
 )
 
@@ -272,14 +272,12 @@ type Options struct {
 	Timeout     time.Duration
 	Concurrency int
 	Store       *Store
-	Logger      *log.Logger
 }
 
 // Scanner orchestrates discovery + syft/grype scanning of all cluster images.
 type Scanner struct {
 	opts     Options
 	matchers []match.Matcher
-	logger   *log.Logger
 	mu       sync.RWMutex
 	provider vulnerability.Provider
 }
@@ -288,13 +286,9 @@ func New(opts Options) *Scanner {
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = 3
 	}
-	if opts.Logger == nil {
-		opts.Logger = log.Default()
-	}
 	return &Scanner{
 		opts:     opts,
 		matchers: defaultMatchers(),
-		logger:   opts.Logger,
 		provider: opts.Provider,
 	}
 }
@@ -339,7 +333,7 @@ func (s *Scanner) RunOnce(ctx context.Context) error {
 		return fmt.Errorf("discover images: %w", err)
 	}
 	s.opts.Store.SetImages(disc.Images)
-	s.logger.Printf("discovered %d unique image(s) in the cluster", len(disc.Images))
+	logx.Infof("discovered %d unique image(s) in the cluster", len(disc.Images))
 
 	jobs := make(chan string)
 	var wg sync.WaitGroup
@@ -352,15 +346,15 @@ func (s *Scanner) RunOnce(ctx context.Context) error {
 				started := time.Now().UTC()
 				n := progress.Add(1)
 				s.opts.Store.MarkScanning(img, started)
-				s.logger.Printf("scanning %s ... (%d/%d)", img, n, len(disc.Images))
+				logx.Infof("scanning %s ... (%d/%d)", img, n, len(disc.Images))
 				result := s.scanImage(ctx, img, disc.PullSecrets[img])
 				result.Instances = disc.Instances[img]
 				s.opts.Store.Put(result)
 				switch result.Status {
 				case StatusScanned:
-					s.logger.Printf("scanned %s: %d artifacts, %d CVE(s) in %s (%d/%d)", img, len(result.Artifacts), len(result.Cves), time.Since(started).Round(time.Second), n, len(disc.Images))
+					logx.Infof("scanned %s: %d artifacts, %d CVE(s) in %s (%d/%d)", img, len(result.Artifacts), len(result.Cves), time.Since(started).Round(time.Second), n, len(disc.Images))
 				case StatusError:
-					s.logger.Printf("scan failed for %s: %s", img, result.Error)
+					logx.Errorf("scan failed for %s: %s", img, result.Error)
 				}
 			}
 		}()
@@ -392,7 +386,7 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 	for _, payload := range pullSecrets {
 		creds, err := registryauth.ParseDockerConfig(payload)
 		if err != nil {
-			s.logger.Printf("ignoring unparseable pull secret for %s: %v", imageRef, err)
+			logx.Warnf("ignoring unparseable pull secret for %s: %v", imageRef, err)
 			continue
 		}
 		for authority, cred := range creds {
@@ -410,7 +404,7 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 	if len(credentials) == 0 && s.opts.ECR != nil {
 		if authority := registryauth.AuthorityForImage(imageRef); ecr.IsECRRegistry(authority) {
 			if username, password, err := s.opts.ECR.Credentials(ctx, authority); err != nil {
-				s.logger.Printf("ecr credentials for %s: %v", authority, err)
+				logx.Warnf("ecr credentials for %s: %v", authority, err)
 			} else {
 				credentials = append(credentials, image.RegistryCredentials{
 					Authority: authority,
@@ -446,7 +440,7 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 		if encoded, err := encodeSyftJSON(*sbo); err == nil {
 			result.SBOM = encoded
 		} else {
-			s.logger.Printf("warning: cannot encode syft SBOM for %s: %v", imageRef, err)
+			logx.Warnf("cannot encode syft SBOM for %s: %v", imageRef, err)
 		}
 	}
 
@@ -546,7 +540,7 @@ func (s *Scanner) runFromSBOM(ctx context.Context) error {
 				name = n
 			}
 		} else {
-			s.logger.Printf("warning: %v (recording it as failed)", err)
+			logx.Warnf("%v (recording it as failed)", err)
 		}
 		seen[name]++
 		if n := seen[name]; n > 1 {
@@ -555,7 +549,7 @@ func (s *Scanner) runFromSBOM(ctx context.Context) error {
 		names = append(names, name)
 	}
 	s.opts.Store.SetImages(names)
-	s.logger.Printf("scanning %d SBOM file(s) with grype (syft skipped)", len(paths))
+	logx.Infof("scanning %d SBOM file(s) with grype (syft skipped)", len(paths))
 
 	jobs := make(chan int)
 	var wg sync.WaitGroup
@@ -568,15 +562,15 @@ func (s *Scanner) runFromSBOM(ctx context.Context) error {
 				started := time.Now().UTC()
 				n := progress.Add(1)
 				s.opts.Store.MarkScanning(names[j], started)
-				s.logger.Printf("scanning %s ... (%d/%d)", paths[j], n, len(paths))
+				logx.Infof("scanning %s ... (%d/%d)", paths[j], n, len(paths))
 				result := s.scanSBOMFile(ctx, paths[j])
 				result.Image = names[j]
 				s.opts.Store.Put(result)
 				switch result.Status {
 				case StatusScanned:
-					s.logger.Printf("scanned %s: %d artifacts, %d CVE(s) in %s (%d/%d)", names[j], len(result.Artifacts), len(result.Cves), time.Since(started).Round(time.Second), n, len(paths))
+					logx.Infof("scanned %s: %d artifacts, %d CVE(s) in %s (%d/%d)", names[j], len(result.Artifacts), len(result.Cves), time.Since(started).Round(time.Second), n, len(paths))
 				case StatusError:
-					s.logger.Printf("scan failed for %s: %s", names[j], result.Error)
+					logx.Errorf("scan failed for %s: %s", names[j], result.Error)
 				}
 			}
 		}()
@@ -626,7 +620,7 @@ func (s *Scanner) scanSBOMFile(ctx context.Context, path string) Result {
 		if encoded, err := encodeSyftJSON(*sbo); err == nil {
 			result.SBOM = encoded
 		} else {
-			s.logger.Printf("warning: cannot encode syft SBOM for %s: %v", path, err)
+			logx.Warnf("cannot encode syft SBOM for %s: %v", path, err)
 		}
 	}
 	result.Artifacts = packageArtifacts(*sbo)

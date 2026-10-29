@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	flag "github.com/spf13/pflag"
+
+	"github.com/getupcloud/artifactor/internal/logx"
 )
 
 // The deploy manifests are embedded in the binary so `artifactor install`
@@ -199,6 +201,7 @@ func runInstallCmd(action string, args []string) {
 	clusterName := fs.String("cluster-name", "", "set the CLUSTER_NAME env of the deployment (shown in the execution logs and report title)")
 	openshift := fs.Bool("openshift", false, "include the OpenShift/OKD SecurityContextConstraints + RBAC manifests (requires cluster-admin to apply)")
 	dbCaCert := fs.String("db-ca-cert", "", "read the grype DB server CA certificate from this PEM file, embed it as a ConfigMap, and configure the deployment to trust it")
+	logLevel := fs.String("log-level", os.Getenv("LOG_LEVEL"), "log verbosity: debug, info, warn or err (default info)")
 	imageTokenEnv := fs.String("image-token-env", "", "read a registry token from this environment variable (default: GH_TOKEN, then GITHUB_TOKEN) and include the artifactor-docker-image-token imagePullSecret manifest")
 	fs.Lookup("image-token-env").NoOptDefVal = "auto"
 	fs.Usage = func() {
@@ -222,6 +225,13 @@ Then install with the CA configured:
 	}
 	if *namespace == "" {
 		log.Fatalf("%s: --namespace cannot be empty", action)
+	}
+	if *logLevel != "" {
+		lvl, err := logx.Parse(*logLevel)
+		if err != nil {
+			log.Fatalf("%s: --log-level: %v", action, err)
+		}
+		logx.Set(lvl)
 	}
 
 	secretData := ""
@@ -280,5 +290,5 @@ Then install with the CA configured:
 	if err := cmd.Run(); err != nil {
 		log.Fatalf("%s: kubectl %s failed: %v", action, verb, err)
 	}
-	log.Printf("%s complete", action)
+	logx.Infof("%s complete", action)
 }

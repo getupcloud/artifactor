@@ -27,6 +27,7 @@ import (
 	"github.com/getupcloud/artifactor/internal/api"
 	"github.com/getupcloud/artifactor/internal/ecr"
 	"github.com/getupcloud/artifactor/internal/k8s"
+	"github.com/getupcloud/artifactor/internal/logx"
 	"github.com/getupcloud/artifactor/internal/scanner"
 )
 
@@ -101,6 +102,7 @@ func runScanCmd(args []string) {
 		insecure     = fs.Bool("insecure-skip-tls", envBool("INSECURE_SKIP_TLS", false), "skip TLS certificate verification for remote servers (image registries and the vulnerability-name refresh)")
 		customerName = fs.String("customer-name", os.Getenv("CUSTOMER_NAME"), "customer name shown in the execution logs and report title")
 		clusterName  = fs.String("cluster-name", os.Getenv("CLUSTER_NAME"), "cluster name shown in the execution logs and report title")
+		logLevel     = fs.String("log-level", envStr("LOG_LEVEL", "info"), "log verbosity: debug, info, warn or err")
 		showVersion  = fs.Bool("version", false, "print version and exit")
 	)
 	fs.Usage = func() {
@@ -114,13 +116,19 @@ func runScanCmd(args []string) {
 	log.SetPrefix("artifactor: ")
 	log.SetFlags(log.LstdFlags)
 
+	lvl, err := logx.Parse(*logLevel)
+	if err != nil {
+		log.Fatalf("--log-level: %v", err)
+	}
+	logx.Set(lvl)
+
 	if *showVersion {
 		fmt.Printf("artifactor %s\n", version)
 		return
 	}
 
 	if *customerName != "" || *clusterName != "" {
-		log.Printf("customer: %q, cluster: %q", *customerName, *clusterName)
+		logx.Infof("customer: %q, cluster: %q", *customerName, *clusterName)
 	}
 
 	namespaces := splitNamespaces(*namespaceCSV)
@@ -150,12 +158,12 @@ func runScanCmd(args []string) {
 	if *fromSBOM == "" {
 		k8sClient, mode, k8sErr = k8s.New()
 		if k8sErr != nil {
-			log.Printf("WARNING: %v (the web UI will show this error)", k8sErr)
+			logx.Warnf("%v (the web UI will show this error)", k8sErr)
 		} else {
-			log.Printf("kubernetes client ready (mode: %s)", mode)
+			logx.Infof("kubernetes client ready (mode: %s)", mode)
 		}
 	} else {
-		log.Printf("SBOM input mode: %s (kubernetes client skipped)", *fromSBOM)
+		logx.Infof("SBOM input mode: %s (kubernetes client skipped)", *fromSBOM)
 	}
 
 	// 2. Scanner + result store + HTTP API (served immediately; the
@@ -178,7 +186,6 @@ func runScanCmd(args []string) {
 			Timeout:     *scanTimeout,
 			Concurrency: *concurrency,
 			Store:       store,
-			Logger:      log.Default(),
 		})
 	}
 
@@ -207,7 +214,7 @@ func runScanCmd(args []string) {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
-		log.Printf("listening on http://0.0.0.0:%d (access with: kubectl port-forward ...)", *port)
+		logx.Infof("listening on http://0.0.0.0:%d (access with: kubectl port-forward ...)", *port)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server: %v", err)
 		}
@@ -217,9 +224,9 @@ func runScanCmd(args []string) {
 	// startup (10s timeout); the embedded copy stays as fallback.
 	go func() {
 		if err := server.FetchNamedVulns(ctx); err != nil {
-			log.Printf("WARNING: cannot refresh named vulnerabilities from GitHub: %v (using the embedded copy)", err)
+			logx.Warnf("cannot refresh named vulnerabilities from GitHub: %v (using the embedded copy)", err)
 		} else {
-			log.Print("named vulnerabilities refreshed from GitHub")
+			logx.Infof("named vulnerabilities refreshed from GitHub")
 		}
 	}()
 
@@ -228,13 +235,13 @@ func runScanCmd(args []string) {
 	dbDone := make(chan struct{})
 	go func() {
 		defer close(dbDone)
-		log.Printf("preparing grype vulnerability database at %s (first run downloads the DB) ...", *dbDir)
+		logx.Infof("preparing grype vulnerability database at %s (first run downloads the DB) ...", *dbDir)
 		provider, status, dbErr := scanner.NewProvider(*dbDir, version, *dbUpdate, *dbCaCert)
 		dbMu.Lock()
 		dbStatus = status
 		dbMu.Unlock()
 		if dbErr != nil {
-			log.Printf("WARNING: vulnerability database: %v (scans will fail until it is available)", dbErr)
+			logx.Warnf("vulnerability database: %v (scans will fail until it is available)", dbErr)
 			if status.Error != "" {
 				store.SetDBError(status.Error)
 			}
@@ -244,7 +251,7 @@ func runScanCmd(args []string) {
 		if status.Built != nil {
 			built = ", built " + status.Built.Format(time.RFC3339)
 		}
-		log.Printf("vulnerability database ready (schema %s%s)", status.SchemaVersion, built)
+		logx.Infof("vulnerability database ready (schema %s%s)", status.SchemaVersion, built)
 		if sc != nil {
 			sc.SetProvider(provider)
 		}
@@ -264,11 +271,11 @@ func runScanCmd(args []string) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				log.Print("checking for vulnerability DB update ...")
+				logx.Debugf("checking for vulnerability DB update ...")
 				updated, provider, status, err := scanner.RefreshDB(*dbDir, version, *dbCaCert)
 				if err != nil {
 					// keep the current (still usable) DB; just log the failure
-					log.Printf("WARNING: vulnerability DB refresh failed: %v", err)
+					logx.Warnf("vulnerability DB refresh failed: %v", err)
 					continue
 				}
 				dbMu.Lock()
@@ -278,9 +285,9 @@ func runScanCmd(args []string) {
 					sc.SetProvider(provider)
 				}
 				if updated {
-					log.Printf("vulnerability DB updated (schema %s)", status.SchemaVersion)
+					logx.Infof("vulnerability DB updated (schema %s)", status.SchemaVersion)
 				} else {
-					log.Print("vulnerability DB already up to date")
+					logx.Debugf("vulnerability DB already up to date")
 				}
 			}
 		}
@@ -293,13 +300,13 @@ func runScanCmd(args []string) {
 			return
 		}
 		if !store.TryStartScan() {
-			log.Print("scan already running, skipping trigger")
+			logx.Infof("scan already running, skipping trigger")
 			return
 		}
 		go func() {
 			defer store.FinishScan()
 			if err := sc.RunOnce(ctx); err != nil && err != context.Canceled {
-				log.Printf("scan run failed: %v", err)
+				logx.Errorf("scan run failed: %v", err)
 				store.SetDBError(err.Error())
 			}
 		}()
@@ -314,13 +321,13 @@ func runScanCmd(args []string) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Print("shutting down ...")
+			logx.Infof("shutting down ...")
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			_ = httpServer.Shutdown(shutdownCtx)
 			cancel()
 			return
 		case <-tickerCh:
-			log.Printf("rescan interval (%s) elapsed", *interval)
+			logx.Infof("rescan interval (%s) elapsed", *interval)
 			runScan()
 		}
 	}
@@ -346,15 +353,15 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		if k8sErr != nil {
 			return fmt.Errorf("no cluster access: %w", k8sErr)
 		}
-		log.Printf("kubernetes client ready (mode: %s)", mode)
+		logx.Infof("kubernetes client ready (mode: %s)", mode)
 	} else {
-		log.Printf("SBOM input mode: %s (kubernetes client skipped)", fromSBOM)
+		logx.Infof("SBOM input mode: %s (kubernetes client skipped)", fromSBOM)
 	}
 
-	log.Printf("preparing grype vulnerability database at %s ...", dbDir)
+	logx.Infof("preparing grype vulnerability database at %s ...", dbDir)
 	provider, dbStatus, dbErr := scanner.NewProvider(dbDir, version, dbUpdate, dbCaCert)
 	if dbErr != nil {
-		log.Printf("WARNING: vulnerability database: %v (images will be scanned but CVE matching will fail)", dbErr)
+		logx.Warnf("vulnerability database: %v (images will be scanned but CVE matching will fail)", dbErr)
 	}
 
 	store := scanner.NewStore()
@@ -368,7 +375,7 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 	// SBOM exports need the SBOM retained in memory; force it on when the
 	// user asked for sbom/complete exports.
 	if (req.sbomDir != "" || req.allDir != "") && !keepSBOM {
-		log.Print("WARNING: --keep-sbom=false but an SBOM export was requested; forcing SBOM retention for this run")
+		logx.Warnf("--keep-sbom=false but an SBOM export was requested; forcing SBOM retention for this run")
 		keepSBOM = true
 	}
 	sc := scanner.New(scanner.Options{
@@ -383,13 +390,12 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		Timeout:     scanTimeout,
 		Concurrency: concurrency,
 		Store:       store,
-		Logger:      log.Default(),
 	})
 
 	if fromSBOM != "" {
-		log.Print("scanning SBOM file(s) with grype ...")
+		logx.Infof("scanning SBOM file(s) with grype ...")
 	} else {
-		log.Print("scanning all cluster images ...")
+		logx.Infof("scanning all cluster images ...")
 	}
 	if err := sc.RunOnce(ctx); err != nil && err != context.Canceled {
 		return err
@@ -409,48 +415,48 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 	// refresh the named vulnerabilities list (10s timeout); the embedded
 	// copy is used when the fetch fails
 	if err := server.FetchNamedVulns(ctx); err != nil {
-		log.Printf("WARNING: cannot refresh named vulnerabilities from GitHub: %v (using the embedded copy)", err)
+		logx.Warnf("cannot refresh named vulnerabilities from GitHub: %v (using the embedded copy)", err)
 	}
 
 	if req.htmlPath != "" {
 		if err := os.WriteFile(req.htmlPath, server.ExportHTML(), 0o644); err != nil {
 			return err
 		}
-		log.Printf("HTML report exported to %s", req.htmlPath)
+		logx.Infof("HTML report exported to %s", req.htmlPath)
 	}
 	if req.sbomDir != "" {
 		n, err := server.ExportSBOMs(req.sbomDir)
 		if err != nil {
 			return err
 		}
-		log.Printf("%d SBOM(s) exported to %s", n, req.sbomDir)
+		logx.Infof("%d SBOM(s) exported to %s", n, req.sbomDir)
 	}
 	if req.grypeDir != "" {
 		n, err := server.ExportGrype(req.grypeDir)
 		if err != nil {
 			return err
 		}
-		log.Printf("%d grype report(s) exported to %s", n, req.grypeDir)
+		logx.Infof("%d grype report(s) exported to %s", n, req.grypeDir)
 	}
 	if req.allDir != "" {
 		htmlPath, csvPath, sbomCount, grypeCount, err := server.ExportAll(req.allDir)
 		if err != nil {
 			return err
 		}
-		log.Printf("full report exported to %s (%s, %s, %d SBOM(s), %d grype report(s))", req.allDir, htmlPath, csvPath, sbomCount, grypeCount)
+		logx.Infof("full report exported to %s (%s, %s, %d SBOM(s), %d grype report(s))", req.allDir, htmlPath, csvPath, sbomCount, grypeCount)
 		if openCmd != "" {
 			if err := openFile(openCmd, htmlPath); err != nil {
-				log.Printf("WARNING: cannot open %s: %v", htmlPath, err)
+				logx.Warnf("cannot open %s: %v", htmlPath, err)
 			}
 		}
 	} else if openCmd != "" {
-		log.Print("WARNING: --open requires --export <dir> (there is no scan.html to open)")
+		logx.Warnf("--open requires --export <dir> (there is no scan.html to open)")
 	}
 	if req.csvPath != "" {
 		if err := server.ExportCVEsCSV(req.csvPath); err != nil {
 			return err
 		}
-		log.Printf("CSV report exported to %s", req.csvPath)
+		logx.Infof("CSV report exported to %s", req.csvPath)
 	}
 	return nil
 }

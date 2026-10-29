@@ -251,13 +251,28 @@ tr.expand-row:hover td { background: var(--bg); }
 const $ = (id) => document.getElementById(id);
 const SEVS = ["critical", "high", "medium", "low", "negligible", "unknown"];
 
-// Self-contained export mode: the server (or --export) replaces the marker
-// above with a <script id="__artifactor_data" type="application/json"> block
-// containing a frozen snapshot of the results. When present, all API calls
-// are answered from this snapshot, so the report works without the server.
+// Offline export mode: the server (or --export) replaces the marker above
+// either with an inline <script id="__artifactor_data" type="application/json">
+// block or with <script src="scan-data-N.js"></script> tags. Each data chunk
+// file pushes one minified JSON object into window.__artifactor_data_parts
+// (external files also load when the report is opened locally via file://).
+// When a snapshot is present, all API calls are answered from it, so the
+// report works without the server.
 const SNAPSHOT = (() => {
   const el = document.getElementById("__artifactor_data");
-  return el ? JSON.parse(el.textContent) : null;
+  if (el) return JSON.parse(el.textContent);
+  const parts = window.__artifactor_data_parts || [];
+  if (!parts.length) return null;
+  // chunks: cves arrays are spread across chunks and must be concatenated;
+  // every other field lives in exactly one chunk
+  const merged = {};
+  for (const part of parts) {
+    for (const key of Object.keys(part)) {
+      if (key === "cves") merged.cves = (merged.cves || []).concat(part.cves || []);
+      else merged[key] = part[key];
+    }
+  }
+  return merged;
 })();
 
 function snapshotFilterCVEs(params) {
@@ -615,9 +630,22 @@ $("scan-btn").onclick = async () => {
 
 $("export-btn").onclick = () => {
   if (SNAPSHOT) {
-    // offline: serialize the current document (the embedded snapshot data
-    // travels with it, so the downloaded file stays self-contained)
-    const blob = new Blob(["<!DOCTYPE html>\n" + document.documentElement.outerHTML], { type: "text/html" });
+    // offline: serialize the current document with the merged snapshot
+    // embedded inline, replacing the external scan-data chunk scripts, so
+    // the downloaded file stays self-contained
+    const doc = document.documentElement.cloneNode(true);
+    const partScripts = doc.querySelectorAll('script[src^="scan-data-"]');
+    if (partScripts.length) {
+      const anchor = partScripts[0];
+      const ref = anchor.nextSibling;
+      partScripts.forEach((s) => s.remove());
+      const script = document.createElement("script");
+      script.id = "__artifactor_data";
+      script.type = "application/json";
+      script.textContent = JSON.stringify(SNAPSHOT).replace(/<\//g, "<\\/");
+      anchor.parentNode.insertBefore(script, ref);
+    }
+    const blob = new Blob(["<!DOCTYPE html>\n" + doc.outerHTML], { type: "text/html" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = "artifactor-report.html";
@@ -782,6 +810,14 @@ if (SNAPSHOT) {
     new Date(SNAPSHOT.generatedAt).toLocaleString() +
     " — data is frozen; all filters work offline.";
   banner.classList.add("show", "info");
+} else if (location.protocol === "file:") {
+  // opened as a local file without its data: browsers block fetch() on
+  // file://, and the scan-data chunk files were not found either
+  const banner = $("banner");
+  banner.textContent = "No data found: keep the scan-data-*.js files next " +
+    "to scan.html (or serve this folder over HTTP and open scan.html " +
+    "from there).";
+  banner.classList.add("show");
 }
 
 poll();

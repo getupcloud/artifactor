@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -28,6 +30,7 @@ import (
 	"github.com/anchore/syft/syft"
 	"github.com/anchore/syft/syft/format"
 	"github.com/anchore/syft/syft/sbom"
+	"github.com/anchore/syft/syft/source"
 
 	"github.com/getupcloud/artifactor/internal/ecr"
 	"github.com/getupcloud/artifactor/internal/k8s"
@@ -260,6 +263,7 @@ func (s *Store) DBError() string {
 type Options struct {
 	Client      *k8s.Client
 	Namespaces  []string               // restrict scanning to these namespaces (empty = all)
+	FromSBOM    string                 // path to an SBOM file or directory of SBOM files (non-recursive): run grype only, skipping syft
 	Provider    vulnerability.Provider // initial grype vulnerability DB provider (may be nil; set later via SetProvider)
 	ECR         *ecr.Provider          // AWS ECR credential provider via the AWS chain/IRSA (nil disables)
 	KeepSBOM    bool                   // retain the encoded syft SBOM per image in memory (needed by --export-sbom)
@@ -324,6 +328,10 @@ func (s *Scanner) RunOnce(ctx context.Context) error {
 	// Return freed pages to the OS after the run: the Go runtime tends to
 	// hold onto heap it no longer needs, which looks like a leak in RSS.
 	defer debug.FreeOSMemory()
+
+	if s.opts.FromSBOM != "" {
+		return s.runFromSBOM(ctx)
+	}
 
 	disc, err := s.opts.Client.Discover(ctx, s.opts.Namespaces)
 	if err != nil {
@@ -438,23 +446,44 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 		}
 	}
 
-	for _, p := range sbo.Artifacts.Packages.Sorted() {
-		result.Artifacts = append(result.Artifacts, Artifact{
+	result.Artifacts = packageArtifacts(*sbo)
+
+	// 2. grype: match CVEs against the SBOM packages.
+	result.Cves, err = s.matchCVEs(ctx, packages, pkgContext)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+
+	result.Status = StatusScanned
+	now := time.Now().UTC()
+	result.ScannedAt = &now
+	return result
+}
+
+// packageArtifacts flattens the packages of an SBOM into the artifact list
+// shown in the UI.
+func packageArtifacts(s sbom.SBOM) []Artifact {
+	artifacts := make([]Artifact, 0, s.Artifacts.Packages.PackageCount())
+	for _, p := range s.Artifacts.Packages.Sorted() {
+		artifacts = append(artifacts, Artifact{
 			Name:    p.Name,
 			Version: p.Version,
 			Type:    string(p.Type),
 			PURL:    p.PURL,
 		})
 	}
-	sort.Slice(result.Artifacts, func(i, j int) bool {
-		return result.Artifacts[i].Name < result.Artifacts[j].Name
+	sort.Slice(artifacts, func(i, j int) bool {
+		return artifacts[i].Name < artifacts[j].Name
 	})
+	return artifacts
+}
 
-	// 2. grype: match CVEs against the SBOM packages.
+// matchCVEs runs grype's vulnerability matcher over the given packages.
+func (s *Scanner) matchCVEs(ctx context.Context, packages []pkg.Package, pkgContext pkg.Context) ([]CVE, error) {
 	provider := s.Provider()
 	if provider == nil {
-		result.Error = "vulnerability database unavailable (see /api/status)"
-		return result
+		return nil, errors.New("vulnerability database unavailable (see /api/status)")
 	}
 	vm := grype.VulnerabilityMatcher{
 		VulnerabilityProvider: provider,
@@ -463,10 +492,10 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 	}
 	matches, _, err := vm.FindMatchesContext(ctx, packages, pkgContext)
 	if err != nil {
-		result.Error = fmt.Sprintf("grype: %v", err)
-		return result
+		return nil, fmt.Errorf("grype: %w", err)
 	}
 
+	cves := []CVE{}
 	for _, m := range matches.Sorted() {
 		c := CVE{
 			ID:             m.Vulnerability.ID,
@@ -484,13 +513,185 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 		} else {
 			c.Severity = "unknown"
 		}
-		result.Cves = append(result.Cves, c)
+		cves = append(cves, c)
+	}
+	return cves, nil
+}
+
+// runFromSBOM scans the SBOM file(s) configured via Options.FromSBOM with
+// grype only: syft is never executed and no image is downloaded.
+func (s *Scanner) runFromSBOM(ctx context.Context) error {
+	paths, err := sbomInputPaths(s.opts.FromSBOM)
+	if err != nil {
+		return fmt.Errorf("read sbom input: %w", err)
+	}
+	if len(paths) == 0 {
+		return fmt.Errorf("no SBOM files in %s", s.opts.FromSBOM)
+	}
+
+	// The store needs the complete image list up front (queued entries in a
+	// stable order), so do a light pass to resolve each file's image name
+	// before scanning. Files are decoded again during the scan; decoding a
+	// local SBOM is cheap compared to the grype matching that follows.
+	names := make([]string, 0, len(paths))
+	seen := map[string]int{}
+	for _, p := range paths {
+		name := sbomNameFromPath(p)
+		if sbo, err := decodeSBOMFile(p); err == nil {
+			if n := sbomImageName(*sbo); n != "" {
+				name = n
+			}
+		} else {
+			s.logger.Printf("warning: %v (recording it as failed)", err)
+		}
+		seen[name]++
+		if n := seen[name]; n > 1 {
+			name = fmt.Sprintf("%s (%d)", name, n)
+		}
+		names = append(names, name)
+	}
+	s.opts.Store.SetImages(names)
+	s.logger.Printf("scanning %d SBOM file(s) with grype (syft skipped)", len(paths))
+
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	var progress atomic.Int64
+	for i := 0; i < s.opts.Concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				started := time.Now().UTC()
+				n := progress.Add(1)
+				s.opts.Store.MarkScanning(names[j], started)
+				s.logger.Printf("scanning %s ... (%d/%d)", paths[j], n, len(paths))
+				result := s.scanSBOMFile(ctx, paths[j])
+				result.Image = names[j]
+				s.opts.Store.Put(result)
+				switch result.Status {
+				case StatusScanned:
+					s.logger.Printf("scanned %s: %d artifacts, %d CVE(s) in %s (%d/%d)", names[j], len(result.Artifacts), len(result.Cves), time.Since(started).Round(time.Second), n, len(paths))
+				case StatusError:
+					s.logger.Printf("scan failed for %s: %s", names[j], result.Error)
+				}
+			}
+		}()
+	}
+	for j := range paths {
+		select {
+		case jobs <- j:
+		case <-ctx.Done():
+			break
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	return ctx.Err()
+}
+
+// scanSBOMFile matches CVEs for one SBOM file with grype. The image name is
+// taken from the SBOM source metadata when available (otherwise from the
+// file name).
+func (s *Scanner) scanSBOMFile(ctx context.Context, path string) Result {
+	result := Result{Image: sbomNameFromPath(path), Status: StatusError, Severities: map[string]int{}}
+
+	ctx, cancel := context.WithTimeout(ctx, s.opts.Timeout)
+	defer cancel()
+
+	f, err := os.Open(path)
+	if err != nil {
+		result.Error = fmt.Sprintf("open: %v", err)
+		return result
+	}
+	defer f.Close()
+
+	// grype decodes the SBOM (any syft-supported format) and returns the
+	// packages + distro context needed for matching; syft is never executed.
+	packages, pkgContext, sbo, err := pkg.ProvideFromReader(f, pkg.ProviderConfig{})
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	if name := sbomImageName(*sbo); name != "" {
+		result.Image = name
+	}
+	if pkgContext.Distro != nil {
+		result.Distro = pkgContext.Distro.String()
+	}
+	if s.opts.KeepSBOM {
+		if encoded, err := encodeSyftJSON(*sbo); err == nil {
+			result.SBOM = encoded
+		} else {
+			s.logger.Printf("warning: cannot encode syft SBOM for %s: %v", path, err)
+		}
+	}
+	result.Artifacts = packageArtifacts(*sbo)
+
+	result.Cves, err = s.matchCVEs(ctx, packages, pkgContext)
+	if err != nil {
+		result.Error = err.Error()
+		return result
 	}
 
 	result.Status = StatusScanned
 	now := time.Now().UTC()
 	result.ScannedAt = &now
 	return result
+}
+
+// decodeSBOMFile decodes one SBOM file, auto-detecting its format.
+func decodeSBOMFile(path string) (*sbom.SBOM, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+	sbo, _, _, err := format.Decode(f)
+	if err != nil {
+		return nil, fmt.Errorf("decode SBOM %s: %w", path, err)
+	}
+	return sbo, nil
+}
+
+// sbomInputPaths returns the SBOM file paths for input: the single file, or
+// every regular file directly inside a directory (non-recursive).
+func sbomInputPaths(input string) ([]string, error) {
+	info, err := os.Stat(input)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return []string{input}, nil
+	}
+	entries, err := os.ReadDir(input)
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		paths = append(paths, filepath.Join(input, e.Name()))
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// sbomNameFromPath is the fallback image name for an SBOM file: the file
+// base name without extension.
+func sbomNameFromPath(path string) string {
+	base := filepath.Base(path)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+// sbomImageName returns the original image reference recorded in the SBOM
+// source metadata when the SBOM was generated from a container image.
+func sbomImageName(s sbom.SBOM) string {
+	if md, ok := s.Source.Metadata.(source.ImageMetadata); ok && md.UserInput != "" {
+		return md.UserInput
+	}
+	return ""
 }
 
 func matcherTypes(types []match.MatcherType) string {

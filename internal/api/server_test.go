@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -592,10 +594,42 @@ func TestExportAll(t *testing.T) {
 	if sbomCount != 1 || grypeCount != 2 {
 		t.Errorf("counts = sbom %d grype %d, want 1/2", sbomCount, grypeCount)
 	}
-	for _, rel := range []string{"scan.html", "scan.csv", "sbom", "grype"} {
+	for _, rel := range []string{"scan.html", "scan-data-0.js", "scan.csv", "sbom", "grype"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Errorf("missing %s in export dir: %v", rel, err)
 		}
+	}
+	htmlData, err := os.ReadFile(htmlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(htmlData), `<script src="scan-data-0.js"></script>`) {
+		t.Errorf("scan.html does not reference the data chunk: %s", htmlData)
+	}
+	if strings.Contains(string(htmlData), `id="__artifactor_data"`) {
+		t.Error("scan.html embeds the snapshot inline, want external data chunks")
+	}
+	jsData, err := os.ReadFile(filepath.Join(dir, "scan-data-0.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const jsPrefix = "window.__artifactor_data_parts=window.__artifactor_data_parts||[];window.__artifactor_data_parts.push("
+	if !strings.HasPrefix(string(jsData), jsPrefix) || !strings.HasSuffix(string(jsData), ");\n") {
+		t.Fatalf("scan-data-0.js is not a parts.push assignment: %.80q", jsData)
+	}
+	jsonData := bytes.TrimSuffix(bytes.TrimPrefix(jsData, []byte(jsPrefix)), []byte(");\n"))
+	if !json.Valid(jsonData) {
+		t.Fatalf("scan-data-0.js payload is not valid JSON: %.80q", jsonData)
+	}
+	var snap struct {
+		Images []map[string]any `json:"images"`
+		Cves   []map[string]any `json:"cves"`
+	}
+	if err := json.Unmarshal(jsonData, &snap); err != nil {
+		t.Fatalf("scan-data-0.js payload: %v", err)
+	}
+	if len(snap.Images) != 3 || len(snap.Cves) != 4 {
+		t.Errorf("scan-data-0.js snapshot = %d images, %d cves; want 3/4", len(snap.Images), len(snap.Cves))
 	}
 	csvData, err := os.ReadFile(csvPath)
 	if err != nil {
@@ -604,6 +638,67 @@ func TestExportAll(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(csvData)), "\n")
 	if len(lines) != 5 { // header + 4 rows
 		t.Errorf("exported scan.csv lines = %d, want 5", len(lines))
+	}
+}
+
+func TestExportDataFilesChunking(t *testing.T) {
+	srv, _ := testServer(t)
+	old := dataChunkSize
+	dataChunkSize = 400 // force several chunks with the 4-row fixture
+	defer func() { dataChunkSize = old }()
+
+	files := srv.ExportDataFiles()
+	if len(files) < 2 {
+		t.Fatalf("chunk files = %d, want > 1 with a tiny chunk size", len(files))
+	}
+
+	// the exported HTML must reference every chunk
+	html := string(srv.ExportHTMLExternal(len(files)))
+	for _, f := range files {
+		if !strings.Contains(html, fmt.Sprintf(`<script src="%s"></script>`, f.name)) {
+			t.Errorf("exported HTML does not reference %s: %s", f.name, html)
+		}
+	}
+
+	const jsPrefix = "window.__artifactor_data_parts=window.__artifactor_data_parts||[];window.__artifactor_data_parts.push("
+	totalCves := 0
+	baseSeen := false
+	for i, f := range files {
+		if f.name != fmt.Sprintf("scan-data-%d.js", i) {
+			t.Errorf("chunk %d name = %q", i, f.name)
+		}
+		if !bytes.HasPrefix(f.data, []byte(jsPrefix)) || !bytes.HasSuffix(f.data, []byte(");\n")) {
+			t.Fatalf("chunk %d wrapper wrong: %.80q", i, f.data)
+		}
+		payload := bytes.TrimSuffix(bytes.TrimPrefix(f.data, []byte(jsPrefix)), []byte(");\n"))
+		if !json.Valid(payload) {
+			t.Fatalf("chunk %d payload is not valid JSON: %.80q", i, payload)
+		}
+		var chunk struct {
+			Images []map[string]any `json:"images"`
+			Cves   []map[string]any `json:"cves"`
+		}
+		if err := json.Unmarshal(payload, &chunk); err != nil {
+			t.Fatalf("chunk %d payload: %v", i, err)
+		}
+		totalCves += len(chunk.Cves)
+		if len(chunk.Images) > 0 {
+			baseSeen = true
+			if i != 0 {
+				t.Errorf("chunk %d carries base fields, want them only in chunk 0", i)
+			}
+		}
+		// cves-only chunks must respect the size bound (chunk 0 may exceed
+		// it when the base fields plus the first row already do)
+		if i > 0 && len(payload) > dataChunkSize {
+			t.Errorf("chunk %d payload = %d bytes, want <= %d", i, len(payload), dataChunkSize)
+		}
+	}
+	if totalCves != 4 {
+		t.Errorf("total cves across chunks = %d, want 4", totalCves)
+	}
+	if !baseSeen {
+		t.Error("no chunk carries the base fields")
 	}
 }
 

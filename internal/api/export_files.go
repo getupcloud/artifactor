@@ -187,15 +187,23 @@ func (s *Server) ExportGrype(dir string) (int, error) {
 	return written, nil
 }
 
-// ExportAll writes the complete export into dir: the self-contained HTML
-// report plus the per-image SBOM and grype JSON files.
+// ExportAll writes the complete export into dir: the HTML report plus its
+// external scan-data chunk files, and the per-image SBOM and grype JSON
+// files. The data travels in sibling files (loaded via <script src>) instead
+// of being embedded inline, so the report also works when opened via file://.
 func (s *Server) ExportAll(dir string) (htmlPath, csvPath string, sbomCount, grypeCount int, err error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", 0, 0, err
 	}
+	files := s.ExportDataFiles()
 	htmlPath = filepath.Join(dir, "scan.html")
-	if err := os.WriteFile(htmlPath, s.ExportHTML(), 0o644); err != nil {
+	if err := os.WriteFile(htmlPath, s.ExportHTMLExternal(len(files)), 0o644); err != nil {
 		return "", "", 0, 0, err
+	}
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, f.name), f.data, 0o644); err != nil {
+			return "", "", 0, 0, err
+		}
 	}
 	csvPath = filepath.Join(dir, "scan.csv")
 	if err := s.ExportCVEsCSV(csvPath); err != nil {

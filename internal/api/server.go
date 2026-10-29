@@ -523,6 +523,133 @@ func (s *Server) ExportHTML() []byte {
 	return bytes.Replace(s.opts.SPA, []byte(exportMarker), payload, 1)
 }
 
+// ExportHTMLExternal renders the SPA referencing the external scan data
+// chunk files (see ExportDataFiles) instead of embedding the snapshot
+// inline. Unlike fetch(), <script src> tags also load sibling files when
+// the report is opened locally via file://.
+func (s *Server) ExportHTMLExternal(parts int) []byte {
+	tags := make([]string, parts)
+	for i := range tags {
+		tags[i] = fmt.Sprintf(`<script src="scan-data-%d.js"></script>`, i)
+	}
+	return bytes.Replace(s.opts.SPA, []byte(exportMarker), []byte(strings.Join(tags, "")), 1)
+}
+
+// dataChunkSize bounds the size of each scan data chunk file. It is a var so
+// tests can shrink it.
+var dataChunkSize = 100 << 20 // ~100 MiB
+
+// dataFile is one exported scan data chunk.
+type dataFile struct {
+	name string
+	data []byte
+}
+
+// dataChunk is one chunk of the export snapshot: the cves array is spread
+// across chunks (concatenated by the SPA), every other field lives only in
+// the first chunk.
+type dataChunk struct {
+	GeneratedAt      time.Time           `json:"generatedAt,omitempty"`
+	Status           map[string]any      `json:"status,omitempty"`
+	Images           []scanner.Summary   `json:"images,omitempty"`
+	Cves             []cveOut            `json:"cves,omitempty"`
+	Namespaces       []string            `json:"namespaces,omitempty"`
+	NamedVulns       []namedVuln         `json:"namedVulns,omitempty"`
+	Artifacts        []string            `json:"artifacts,omitempty"`
+	ArtifactsByImage map[string][]string `json:"artifactsByImage,omitempty"`
+}
+
+// ExportDataFiles renders the current results as minified JSON chunks of at
+// most dataChunkSize bytes each. Every chunk file assigns one chunk to
+// window.__artifactor_data_parts (loaded via <script src>, so it also works
+// over file://).
+func (s *Server) ExportDataFiles() []dataFile {
+	snap := s.buildSnapshot()
+
+	// the non-cves fields are small and serialized once; cve rows are
+	// marshaled individually so chunks can be packed by measured size
+	base := dataChunk{
+		GeneratedAt:      snap.GeneratedAt,
+		Status:           snap.Status,
+		Images:           snap.Images,
+		Namespaces:       snap.Namespaces,
+		NamedVulns:       snap.NamedVulns,
+		Artifacts:        snap.Artifacts,
+		ArtifactsByImage: snap.ArtifactsByImage,
+	}
+	baseJSON, err := json.Marshal(base)
+	if err != nil {
+		baseJSON = []byte("{}")
+	}
+
+	rows := make([][]byte, 0, len(snap.Cves))
+	for _, c := range snap.Cves {
+		if row, err := json.Marshal(c); err == nil {
+			rows = append(rows, row)
+		}
+	}
+
+	// pack cve rows into chunks of at most dataChunkSize bytes
+	var chunks [][]byte
+	start := 0
+	size := len(baseJSON) - 1 + len(`,"cves":[]}`) // first chunk carries the base fields
+	for i, row := range rows {
+		if i > start && size+len(row)+1 > dataChunkSize {
+			chunks = append(chunks, assembleDataChunk(baseJSON, rows[start:i], start == 0))
+			start = i
+			size = len(`{"cves":[]}`)
+		}
+		size += len(row) + 1
+	}
+	chunks = append(chunks, assembleDataChunk(baseJSON, rows[start:], start == 0))
+
+	files := make([]dataFile, 0, len(chunks))
+	for i, payload := range chunks {
+		payload = escapeJS(payload)
+		data := append([]byte("window.__artifactor_data_parts=window.__artifactor_data_parts||[];window.__artifactor_data_parts.push("), payload...)
+		data = append(data, []byte(");\n")...)
+		files = append(files, dataFile{name: fmt.Sprintf("scan-data-%d.js", i), data: data})
+	}
+	return files
+}
+
+// assembleDataChunk merges the base fields (first chunk only) with a slice
+// of pre-marshaled cve rows into one minified JSON object.
+func assembleDataChunk(baseJSON []byte, rows [][]byte, first bool) []byte {
+	var out []byte
+	if first {
+		out = append(out, baseJSON[:len(baseJSON)-1]...) // strip closing "}"
+		out = append(out, `,"cves":[`...)
+	} else {
+		out = append(out, `{"cves":[`...)
+	}
+	out = append(out, joinJSONRows(rows)...)
+	return append(out, ']', '}')
+}
+
+// joinJSONRows concatenates pre-marshaled JSON values with commas.
+func joinJSONRows(rows [][]byte) []byte {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := append([]byte(nil), rows[0]...)
+	for _, r := range rows[1:] {
+		out = append(out, ',')
+		out = append(out, r...)
+	}
+	return out
+}
+
+// escapeJS keeps a JSON payload a valid JS expression even if the chunk file
+// is ever inlined: escape "</" (script breakout) and the U+2028/U+2029 line
+// separators (invalid in older JS string literals).
+func escapeJS(data []byte) []byte {
+	data = bytes.ReplaceAll(data, []byte("</"), []byte(`<\/`))
+	data = bytes.ReplaceAll(data, []byte("\u2028"), []byte(`\u2028`))
+	data = bytes.ReplaceAll(data, []byte("\u2029"), []byte(`\u2029`))
+	return data
+}
+
 // GET /api/export downloads the self-contained report.
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

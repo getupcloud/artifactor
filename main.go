@@ -85,6 +85,8 @@ func runScanCmd(args []string) {
 		concurrency  = fs.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
 		dbDir        = fs.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
 		dbUpdate     = fs.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")
+		fromSBOM     = fs.String("from-sbom", envStr("FROM_SBOM", ""), "scan an SBOM file or all files of a directory (non-recursive) with grype only, skipping syft and image download")
+		dbRefresh    = fs.Duration("db-refresh-interval", envDuration("DB_REFRESH_INTERVAL", 24*time.Hour), "check for grype DB updates on this interval while running (0 disables)")
 		platform     = fs.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
 		scanTimeout  = fs.Duration("scan-timeout", envDuration("SCAN_TIMEOUT", 15*time.Minute), "per-image scan timeout")
 		exportHTML   = fs.String("export-html", envStr("EXPORT_HTML", ""), "run a scan, export the report as a single self-contained HTML file to this path, and exit")
@@ -131,7 +133,7 @@ func runScanCmd(args []string) {
 			grypeDir: *exportGrype,
 			allDir:   *exportAll,
 			csvPath:  *exportCSV,
-		}, *dbDir, *dbUpdate, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *keepSBOM, *customerName, *clusterName, *openReport)
+		}, *dbDir, *dbUpdate, *fromSBOM, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *keepSBOM, *customerName, *clusterName, *openReport)
 		if err != nil {
 			log.Fatalf("export: %v", err)
 		}
@@ -139,11 +141,19 @@ func runScanCmd(args []string) {
 	}
 
 	// 1. Kubernetes client: in-cluster (kubernetes.default.svc) or kubeconfig.
-	k8sClient, mode, k8sErr := k8s.New()
-	if k8sErr != nil {
-		log.Printf("WARNING: %v (the web UI will show this error)", k8sErr)
+	//    With --from-sbom no cluster access is needed: syft and the image
+	//    download are skipped, only the local SBOM file(s) are scanned.
+	var k8sClient *k8s.Client
+	mode, k8sErr := "from-sbom", error(nil)
+	if *fromSBOM == "" {
+		k8sClient, mode, k8sErr = k8s.New()
+		if k8sErr != nil {
+			log.Printf("WARNING: %v (the web UI will show this error)", k8sErr)
+		} else {
+			log.Printf("kubernetes client ready (mode: %s)", mode)
+		}
 	} else {
-		log.Printf("kubernetes client ready (mode: %s)", mode)
+		log.Printf("SBOM input mode: %s (kubernetes client skipped)", *fromSBOM)
 	}
 
 	// 2. Scanner + result store + HTTP API (served immediately; the
@@ -154,10 +164,11 @@ func runScanCmd(args []string) {
 		ecrProvider = ecr.NewProvider()
 	}
 	var sc *scanner.Scanner
-	if k8sClient != nil {
+	if k8sClient != nil || *fromSBOM != "" {
 		sc = scanner.New(scanner.Options{
 			Client:      k8sClient,
 			Namespaces:  namespaces,
+			FromSBOM:    *fromSBOM,
 			ECR:         ecrProvider,
 			KeepSBOM:    *keepSBOM,
 			Platform:    *platform,
@@ -210,7 +221,9 @@ func runScanCmd(args []string) {
 
 	// 3. Grype vulnerability database: downloads on first run (can take a
 	//    while), so it runs in the background while the UI is already up.
+	dbDone := make(chan struct{})
 	go func() {
+		defer close(dbDone)
 		log.Printf("preparing grype vulnerability database at %s (first run downloads the DB) ...", *dbDir)
 		provider, status, dbErr := scanner.NewProvider(*dbDir, version, *dbUpdate)
 		dbMu.Lock()
@@ -230,6 +243,42 @@ func runScanCmd(args []string) {
 		log.Printf("vulnerability database ready (schema %s%s)", status.SchemaVersion, built)
 		if sc != nil {
 			sc.SetProvider(provider)
+		}
+	}()
+
+	// 3b. Periodic DB refresh: while the server runs, re-check for a newer
+	//     grype DB on --db-refresh-interval and swap the provider in place.
+	go func() {
+		<-dbDone // never touch the DB dir while the initial download runs
+		if *dbRefresh <= 0 {
+			return
+		}
+		t := time.NewTicker(*dbRefresh)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				log.Print("checking for vulnerability DB update ...")
+				updated, provider, status, err := scanner.RefreshDB(*dbDir, version)
+				if err != nil {
+					// keep the current (still usable) DB; just log the failure
+					log.Printf("WARNING: vulnerability DB refresh failed: %v", err)
+					continue
+				}
+				dbMu.Lock()
+				dbStatus = status
+				dbMu.Unlock()
+				if sc != nil && provider != nil {
+					sc.SetProvider(provider)
+				}
+				if updated {
+					log.Printf("vulnerability DB updated (schema %s)", status.SchemaVersion)
+				} else {
+					log.Print("vulnerability DB already up to date")
+				}
+			}
 		}
 	}()
 
@@ -284,12 +333,19 @@ type exportRequest struct {
 
 // runExport implements the --export* flags: prepare the DB, scan every image
 // once, write the requested artifacts, and exit.
-func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, keepSBOM bool, customerName, clusterName, openCmd string) error {
-	k8sClient, mode, k8sErr := k8s.New()
-	if k8sErr != nil {
-		return fmt.Errorf("no cluster access: %w", k8sErr)
+func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, fromSBOM string, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, keepSBOM bool, customerName, clusterName, openCmd string) error {
+	var k8sClient *k8s.Client
+	mode := "from-sbom"
+	if fromSBOM == "" {
+		var k8sErr error
+		k8sClient, mode, k8sErr = k8s.New()
+		if k8sErr != nil {
+			return fmt.Errorf("no cluster access: %w", k8sErr)
+		}
+		log.Printf("kubernetes client ready (mode: %s)", mode)
+	} else {
+		log.Printf("SBOM input mode: %s (kubernetes client skipped)", fromSBOM)
 	}
-	log.Printf("kubernetes client ready (mode: %s)", mode)
 
 	log.Printf("preparing grype vulnerability database at %s ...", dbDir)
 	provider, dbStatus, dbErr := scanner.NewProvider(dbDir, version, dbUpdate)
@@ -314,6 +370,7 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 	sc := scanner.New(scanner.Options{
 		Client:      k8sClient,
 		Namespaces:  namespaces,
+		FromSBOM:    fromSBOM,
 		Provider:    provider,
 		ECR:         ecrProvider,
 		KeepSBOM:    keepSBOM,
@@ -324,7 +381,11 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		Logger:      log.Default(),
 	})
 
-	log.Print("scanning all cluster images ...")
+	if fromSBOM != "" {
+		log.Print("scanning SBOM file(s) with grype ...")
+	} else {
+		log.Print("scanning all cluster images ...")
+	}
 	if err := sc.RunOnce(ctx); err != nil && err != context.Canceled {
 		return err
 	}
@@ -334,7 +395,6 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		SPA:          spaHTML,
 		NamesJSON:    namesJSON,
 		Mode:         mode,
-		K8sErr:       k8sErr,
 		CustomerName: customerName,
 		ClusterName:  clusterName,
 		DB:           func() scanner.DBStatus { return dbStatus },

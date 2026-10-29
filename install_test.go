@@ -10,7 +10,7 @@ import (
 )
 
 func TestRenderManifests(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "", "")
+	data, err := renderManifests("", "", "artifactor", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestRenderManifests(t *testing.T) {
 }
 
 func TestRenderManifestsNamespace(t *testing.T) {
-	data, err := renderManifests("", "", "team-a", "", "")
+	data, err := renderManifests("", "", "team-a", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestRenderManifestsNamespace(t *testing.T) {
 }
 
 func TestRenderManifestsImageOverride(t *testing.T) {
-	data, err := renderManifests("registry.example.com/team/artifactor:v9", "", "artifactor", "", "")
+	data, err := renderManifests("registry.example.com/team/artifactor:v9", "", "artifactor", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestRenderManifestsImageOverride(t *testing.T) {
 }
 
 func TestRenderManifestsNamesEnv(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "Acme Corp", "prod-eks")
+	data, err := renderManifests("", "", "artifactor", "Acme Corp", "prod-eks", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 	}
 
 	// unset flags leave the manifest defaults alone
-	data, err = renderManifests("", "", "artifactor", "", "")
+	data, err = renderManifests("", "", "artifactor", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,12 +105,45 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 	}
 
 	// quotes and backslashes in the value are escaped
-	data, err = renderManifests("", "", "artifactor", `Acme "X"\Y`, "")
+	data, err = renderManifests("", "", "artifactor", `Acme "X"\Y`, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(data), `value: "Acme \"X\"\\Y"`) {
 		t.Error("env value was not YAML-escaped")
+	}
+}
+
+func TestRenderManifestsOpenshift(t *testing.T) {
+	// without --openshift the SCC manifests are not rendered
+	data, err := renderManifests("", "", "artifactor", "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "SecurityContextConstraints") {
+		t.Error("OpenShift manifests included without --openshift")
+	}
+
+	// with --openshift they are, and the subject namespace follows --namespace
+	data, err = renderManifests("", "", "team-a", "", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"kind: SecurityContextConstraints",
+		"name: artifactor-scc",
+		"runAsUser:",
+		"uid: 65532",
+		"securitycontextconstraints",
+		"namespace: team-a",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("openshift manifests missing %q", want)
+		}
+	}
+	if strings.Contains(text, "namespace: artifactor") {
+		t.Error("openshift manifests still reference the artifactor namespace")
 	}
 }
 
@@ -158,7 +191,7 @@ func TestRenderManifestsWithSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := renderManifests("", secretData, "artifactor", "", "")
+	data, err := renderManifests("", secretData, "artifactor", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +251,13 @@ func TestInstallDump(t *testing.T) {
 	})
 	if !strings.Contains(out, `value: "Acme Corp"`) || !strings.Contains(out, `value: "prod"`) {
 		t.Error("install --dump --customer-name/--cluster-name did not set the deployment env")
+	}
+
+	out = captureStdout(t, func() {
+		runInstallCmd("install", []string{"--dump", "--openshift"})
+	})
+	if !strings.Contains(out, "kind: SecurityContextConstraints") || !strings.Contains(out, "name: artifactor-scc") {
+		t.Error("install --dump --openshift did not include the SCC manifests")
 	}
 
 	t.Setenv("GH_TOKEN", "tok123")

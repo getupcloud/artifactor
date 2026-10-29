@@ -19,6 +19,9 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
+        # makes emptyDir volumes group-writable for uid 65532 (also
+        # required to satisfy the OpenShift artifactor SCC)
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       imagePullSecrets:

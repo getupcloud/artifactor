@@ -11,6 +11,19 @@ import (
 	"github.com/anchore/grype/grype/vulnerability"
 )
 
+// DBOptions configures the preparation of the grype vulnerability database.
+type DBOptions struct {
+	Root       string // directory that holds the DB (DBRootDir)
+	AppVersion string // version string sent in the User-Agent header
+	CACert     string // path to a PEM CA certificate used to verify the DB server ("" = system roots)
+	AutoUpdate bool   // download/update the DB when it is missing or outdated
+	// DirectDownload fetches the listing (latest.json) and the DB archive
+	// directly with net/http, instead of using the grype download library.
+	// Insecure controls TLS verification for that download.
+	DirectDownload bool
+	Insecure       bool // skip TLS certificate verification for the direct DB download
+}
+
 // DBStatus describes the state of the grype vulnerability database.
 type DBStatus struct {
 	Dir           string     `json:"dir"`
@@ -41,21 +54,27 @@ func newCurator(dbRoot, appVersion, caCert string) (dbv6.Curator, error) {
 	return installation.NewCurator(cfg, client)
 }
 
-// NewProvider prepares the grype vulnerability database at dbRoot and returns
-// a vulnerability provider backed by it. With autoUpdate enabled the latest
-// database is downloaded when missing or when an update check is due; an
-// existing database is still used if the update fails (e.g. no network).
-func NewProvider(dbRoot, appVersion string, autoUpdate bool, caCert string) (vulnerability.Provider, DBStatus, error) {
-	status := DBStatus{Dir: dbRoot}
+// NewProvider prepares the grype vulnerability database at opts.Root and
+// returns a vulnerability provider backed by it. With AutoUpdate enabled the
+// latest database is downloaded when missing or when an update check is due;
+// an existing database is still used if the update fails (e.g. no network).
+func NewProvider(opts DBOptions) (vulnerability.Provider, DBStatus, error) {
+	status := DBStatus{Dir: opts.Root}
 
-	curator, err := newCurator(dbRoot, appVersion, caCert)
+	curator, err := newCurator(opts.Root, opts.AppVersion, opts.CACert)
 	if err != nil {
 		return nil, status, fmt.Errorf("create db curator: %w", err)
 	}
 
-	if autoUpdate {
-		if _, err := curator.Update(); err != nil {
-			status.Error = fmt.Sprintf("db update: %v", err)
+	if opts.AutoUpdate {
+		var updateErr error
+		if opts.DirectDownload {
+			_, updateErr = directUpdate(opts)
+		} else {
+			_, updateErr = curator.Update()
+		}
+		if updateErr != nil {
+			status.Error = fmt.Sprintf("db update: %v", updateErr)
 		}
 	}
 
@@ -78,15 +97,19 @@ func NewProvider(dbRoot, appVersion string, autoUpdate bool, caCert string) (vul
 // returning a fresh provider backed by the (possibly updated) database. The
 // provider is non-nil only when a usable DB is available afterwards; on
 // failure callers should keep their previous provider.
-func RefreshDB(dbRoot, appVersion string, caCert string) (updated bool, provider vulnerability.Provider, status DBStatus, err error) {
-	status = DBStatus{Dir: dbRoot}
+func RefreshDB(opts DBOptions) (updated bool, provider vulnerability.Provider, status DBStatus, err error) {
+	status = DBStatus{Dir: opts.Root}
 
-	curator, err := newCurator(dbRoot, appVersion, caCert)
+	curator, err := newCurator(opts.Root, opts.AppVersion, opts.CACert)
 	if err != nil {
 		return false, nil, status, fmt.Errorf("create db curator: %w", err)
 	}
 
-	updated, err = curator.Update()
+	if opts.DirectDownload {
+		updated, err = directUpdate(opts)
+	} else {
+		updated, err = curator.Update()
+	}
 	if err != nil {
 		status.Error = fmt.Sprintf("db update: %v", err)
 		return updated, nil, status, err

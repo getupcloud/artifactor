@@ -102,6 +102,8 @@ Dockerfile / Makefile       build da imagem e automação
 | `--concurrency` | `CONCURRENCY` | `3` | scans paralelos |
 | `--db-dir` | `DB_DIR` | cache do usuário | diretório do banco de vulnerabilidades do grype |
 | `--db-auto-update` | `DB_AUTO_UPDATE` | `true` | baixa/atualiza o banco grype na inicialização |
+| `--grype-db-direct-download` | `GRYPE_DB_DIRECT_DOWNLOAD` | `false` | baixa o banco grype e seus metadados (`latest.json` + arquivo) diretamente via HTTP(S), sem a biblioteca de download do grype; respeita `--insecure-skip-tls` e `--db-ca-cert` |
+| `--ignore-grype-db-unavailable` | `IGNORE_GRYPE_DB_UNAVAILABLE` | `false` | continua servindo quando o banco grype não está disponível e não pôde ser baixado (os scans falham até ele ficar disponível); sem a flag, o artifactor encerra |
 | `--platform` | `PLATFORM` | `linux/<GOARCH>` | plataforma da imagem a escanear |
 | `--scan-timeout` | `SCAN_TIMEOUT` | `15m` | timeout por imagem |
 | `--export-html <arquivo>` | `EXPORT_HTML` | — | escaneia uma vez, exporta o relatório em um único HTML auto-contido e sai |
@@ -160,5 +162,5 @@ O scanner usa uma ServiceAccount dedicada com permissões mínimas (ClusterRole)
 ## Limitações conhecidas
 
 - Imagens hospedadas em registries sem rota de rede a partir do Pod do scanner ficam com status `error`.
-- O primeiro download do banco de vulnerabilidades do grype exige acesso à internet (ou forneça um banco já existente via `--db-dir` + `--db-auto-update=false`).
+- O primeiro download do banco de vulnerabilidades do grype exige acesso à internet (ou forneça um banco já existente via `--db-dir` + `--db-auto-update=false`). Se não houver banco utilizável e o download falhar, o processo encerra (use `--ignore-grype-db-unavailable` para continuar servindo mesmo assim).
 - Credenciais de `credHelpers`/`credStore` (clientes docker externos) não se aplicam; apenas o conteúdo dos secrets é usado.

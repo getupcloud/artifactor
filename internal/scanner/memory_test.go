@@ -21,7 +21,7 @@ func TestScanMemoryRelease(t *testing.T) {
 	if dbDir == "" {
 		t.Skip("set CIS_TEST_DB_DIR to run the integration test")
 	}
-	provider, status, err := NewProvider(dbDir, "test", false)
+	provider, status, err := NewProvider(DBOptions{Root: dbDir, AppVersion: "test"})
 	if err != nil {
 		t.Fatalf("provider: %v (status: %+v)", err, status)
 	}

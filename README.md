@@ -4,6 +4,10 @@ Web app (Pod + Service no Kubernetes) que escaneia **todas as imagens de contêi
 
 O resultado é apresentado em uma **SPA** que permite filtrar os CVEs pelos **nomes dos artefatos (pacotes) encontrados pelo syft**, por severidade e por ID de CVE.
 
+> [!IMPORTANT]
+> O comando deve ser executado a partir de um local que tenha acesso tanto a API do cluster através do `kubeconfig`, quanto dos `registros de imagens` de containers que executam no cluster.
+> As credenciais de cada registro são coletadas durante a execução, baseado no campo `imagePullSecrets` de cada Pod, ou através de `IRSA` para clusters EKS.
+
 ## TL;DR;
 
 Baixe o ultimo binário em [release](https://github.com/getupcloud/artifactor/releases) e execute o scan:

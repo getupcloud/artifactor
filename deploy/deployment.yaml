@@ -28,7 +28,7 @@ spec:
         - name: artifactor-docker-image-token
       containers:
         - name: scanner
-          image: ghcr.io/getupcloud/artifactor:0.2.3 # build with `make docker-build` and set your tag
+          image: ghcr.io/getupcloud/artifactor:0.2.4 # build with `make docker-build` and set your tag
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

@@ -172,6 +172,7 @@ func (s *Server) statusPayload() map[string]any {
 		"k8sError":     errString(s.opts.K8sErr),
 		"scanning":     s.opts.Store.IsScanning(),
 		"lastScanDone": s.opts.Store.LastScanDone(),
+		"lastScan":     s.opts.Store.Stats(),
 		"customer":     s.opts.CustomerName,
 		"cluster":      s.opts.ClusterName,
 		"db":           db,

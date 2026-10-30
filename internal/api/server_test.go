@@ -739,6 +739,14 @@ func TestStatusEndpoint(t *testing.T) {
 	if status["customer"] != "Acme" || status["cluster"] != "prod-eks" {
 		t.Errorf("customer/cluster = %v/%v", status["customer"], status["cluster"])
 	}
+	store.SetStats(scanner.ScanStats{Images: 3, DurationSec: 60, AvgSecPerImg: 20, Bytes: 1500, BytesPerSec: 25})
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	_ = json.Unmarshal(rec.Body.Bytes(), &status)
+	ls, ok := status["lastScan"].(map[string]any)
+	if !ok || ls["images"] != float64(3) || ls["bytesReceived"] != float64(1500) {
+		t.Errorf("lastScan = %v, want the stored scan stats", status["lastScan"])
+	}
 	store.SetDBError("boom")
 	rec = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)

@@ -345,6 +345,24 @@ const state = {
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+// fmtBytes renders a byte count with binary units (matches the Go side).
+const fmtBytes = (n) => {
+  if (!n || n < 1024) return (n || 0) + " B";
+  const units = ["KiB", "MiB", "GiB", "TiB"];
+  let v = n, i = -1;
+  do { v /= 1024; i++; } while (v >= 1024 && i < units.length - 1);
+  return v.toFixed(1) + " " + units[i];
+};
+
+// fmtDuration renders seconds as 1h2m3s.
+const fmtDuration = (sec) => {
+  if (!sec || sec < 1) return (sec || 0).toFixed(1) + "s";
+  const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+  if (m < 60) return m + "m" + s + "s";
+  const h = Math.floor(m / 60);
+  return h + "h" + (m % 60) + "m";
+};
+
 async function api(path) {
   if (SNAPSHOT) return snapshotAPI(path);
   const res = await fetch(path);
@@ -369,9 +387,17 @@ async function refreshStatus() {
     $("db-chip").textContent = "db: " + (db.schemaVersion ? "v" + db.schemaVersion : "n/a")
       + (db.built ? " (built " + db.built.slice(0, 10) + ")" : "")
       + (db.error ? " — ERROR" : "");
-    $("last-chip").textContent = "last scan: " + (state.status.lastScanDone
+    const ls = state.status.lastScan || {};
+    let lastText = "last scan: " + (state.status.lastScanDone
       ? new Date(state.status.lastScanDone).toLocaleString() : "never")
       + (state.status.scanning ? " — scanning…" : "");
+    if (ls.images) {
+      lastText += " — " + ls.images + " image(s) in " + fmtDuration(ls.durationSec) +
+        " (avg " + fmtDuration(ls.avgSecPerImage) + "/image) · " +
+        fmtBytes(ls.bytesReceived) +
+        (ls.bytesPerSec > 0 ? " (" + fmtBytes(ls.bytesPerSec) + "/s)" : "");
+    }
+    $("last-chip").textContent = lastText;
     const banner = $("banner");
     if (!SNAPSHOT) {
       const problems = [];

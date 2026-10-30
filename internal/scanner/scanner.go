@@ -85,6 +85,7 @@ type Result struct {
 	CVECount      int            `json:"cveCount"`
 	Severities    map[string]int `json:"severities"`
 	SBOM          []byte         `json:"-"` // syft JSON SBOM of the image (used by --export-sbom)
+	Bytes         int64          `json:"-"` // bytes received for this image (compressed size pulled from the registry, or the SBOM file size)
 }
 
 // Summary is the API-facing projection of a Result.
@@ -120,6 +121,7 @@ type Store struct {
 	scanning     bool
 	lastScanDone *time.Time
 	dbError      string
+	stats        ScanStats
 }
 
 func NewStore() *Store {
@@ -253,6 +255,20 @@ func (s *Store) SetDBError(err string) {
 	s.dbError = err
 }
 
+// SetStats records the metrics of the last completed scan run.
+func (s *Store) SetStats(st ScanStats) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stats = st
+}
+
+// Stats returns the metrics of the last completed scan run.
+func (s *Store) Stats() ScanStats {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.stats
+}
+
 func (s *Store) DBError() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -328,6 +344,7 @@ func (s *Scanner) RunOnce(ctx context.Context) error {
 		return s.runFromSBOM(ctx)
 	}
 
+	start := time.Now()
 	disc, err := s.opts.Client.Discover(ctx, s.opts.Namespaces)
 	if err != nil {
 		return fmt.Errorf("discover images: %w", err)
@@ -338,6 +355,8 @@ func (s *Scanner) RunOnce(ctx context.Context) error {
 	jobs := make(chan string)
 	var wg sync.WaitGroup
 	var progress atomic.Int64
+	var scanned atomic.Int64
+	var totalBytes atomic.Int64
 	for i := 0; i < s.opts.Concurrency; i++ {
 		wg.Add(1)
 		go func() {
@@ -350,6 +369,10 @@ func (s *Scanner) RunOnce(ctx context.Context) error {
 				result := s.scanImage(ctx, img, disc.PullSecrets[img])
 				result.Instances = disc.Instances[img]
 				s.opts.Store.Put(result)
+				if result.Status == StatusScanned {
+					scanned.Add(1)
+				}
+				totalBytes.Add(result.Bytes)
 				switch result.Status {
 				case StatusScanned:
 					logx.Infof("scanned %s: %d artifacts, %d CVE(s) in %s (%d/%d)", img, len(result.Artifacts), len(result.Cves), time.Since(started).Round(time.Second), n, len(disc.Images))
@@ -368,6 +391,7 @@ func (s *Scanner) RunOnce(ctx context.Context) error {
 	}
 	close(jobs)
 	wg.Wait()
+	s.finishScanStats(start, scanned.Load(), totalBytes.Load())
 	return ctx.Err()
 }
 
@@ -435,6 +459,10 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 	}
 	if pkgContext.Distro != nil {
 		result.Distro = pkgContext.Distro.String()
+	}
+	// the compressed image size is what was pulled from the registry
+	if md, ok := sbo.Source.Metadata.(source.ImageMetadata); ok {
+		result.Bytes = md.Size
 	}
 	if s.opts.KeepSBOM {
 		if encoded, err := encodeSyftJSON(*sbo); err == nil {
@@ -527,6 +555,8 @@ func (s *Scanner) runFromSBOM(ctx context.Context) error {
 		return fmt.Errorf("no SBOM files in %s", s.opts.FromSBOM)
 	}
 
+	start := time.Now()
+
 	// The store needs the complete image list up front (queued entries in a
 	// stable order), so do a light pass to resolve each file's image name
 	// before scanning. Files are decoded again during the scan; decoding a
@@ -554,6 +584,8 @@ func (s *Scanner) runFromSBOM(ctx context.Context) error {
 	jobs := make(chan int)
 	var wg sync.WaitGroup
 	var progress atomic.Int64
+	var scanned atomic.Int64
+	var totalBytes atomic.Int64
 	for i := 0; i < s.opts.Concurrency; i++ {
 		wg.Add(1)
 		go func() {
@@ -566,6 +598,10 @@ func (s *Scanner) runFromSBOM(ctx context.Context) error {
 				result := s.scanSBOMFile(ctx, paths[j])
 				result.Image = names[j]
 				s.opts.Store.Put(result)
+				if result.Status == StatusScanned {
+					scanned.Add(1)
+				}
+				totalBytes.Add(result.Bytes)
 				switch result.Status {
 				case StatusScanned:
 					logx.Infof("scanned %s: %d artifacts, %d CVE(s) in %s (%d/%d)", names[j], len(result.Artifacts), len(result.Cves), time.Since(started).Round(time.Second), n, len(paths))
@@ -584,6 +620,7 @@ func (s *Scanner) runFromSBOM(ctx context.Context) error {
 	}
 	close(jobs)
 	wg.Wait()
+	s.finishScanStats(start, scanned.Load(), totalBytes.Load())
 	return ctx.Err()
 }
 
@@ -602,6 +639,9 @@ func (s *Scanner) scanSBOMFile(ctx context.Context, path string) Result {
 		return result
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err == nil {
+		result.Bytes = fi.Size()
+	}
 
 	// grype decodes the SBOM (any syft-supported format) and returns the
 	// packages + distro context needed for matching; syft is never executed.

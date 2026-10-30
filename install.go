@@ -127,7 +127,7 @@ func dockerConfigSecretData(token string) (string, error) {
 // env values of the deployment. The imagePullSecret template is included
 // only when secretData is non-empty (rendered first, before the deployment
 // that references it).
-func renderManifests(image, secretData, namespace, customerName, clusterName string, openshift bool, caCertData string) ([]byte, error) {
+func renderManifests(image, secretData, namespace, customerName, clusterName string, openshift bool, caCertData string, skipNamespace bool) ([]byte, error) {
 	entries, err := manifestsFS.ReadDir("deploy")
 	if err != nil {
 		return nil, err
@@ -144,6 +144,9 @@ func renderManifests(image, secretData, namespace, customerName, clusterName str
 	for _, entry := range entries {
 		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
+		}
+		if skipNamespace && entry.Name() == "namespace.yaml" {
+			continue // uninstall must not delete the namespace
 		}
 		data, err := manifestsFS.ReadFile("deploy/" + entry.Name())
 		if err != nil {
@@ -196,6 +199,7 @@ func renderManifests(image, secretData, namespace, customerName, clusterName str
 func runInstallCmd(action string, args []string) {
 	fs := flag.NewFlagSet("artifactor "+action, flag.ExitOnError)
 	dump := fs.Bool("dump", false, "only print the manifests to stdout without applying them")
+	dryRun := fs.Bool("dry-run", false, "validate the manifests with kubectl --dry-run=client without applying anything")
 	image := fs.String("image", "", "override the container image in the deployment manifest")
 	namespace := fs.String("namespace", "artifactor", "namespace to install the manifests into")
 	customerName := fs.String("customer-name", "", "set the CUSTOMER_NAME env of the deployment (shown in the execution logs and report title)")
@@ -206,7 +210,7 @@ func runInstallCmd(action string, args []string) {
 	imageTokenEnv := fs.String("image-token-env", "", "read a registry token from this environment variable (default: GH_TOKEN, then GITHUB_TOKEN) and include the artifactor-docker-image-token imagePullSecret manifest")
 	fs.Lookup("image-token-env").NoOptDefVal = "auto"
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: artifactor %s [--dump] [--image <ref>] [--namespace <ns>] [--customer-name <name>] [--cluster-name <name>] [--openshift] [--db-ca-cert <pem>] [--image-token-env[=VAR]]\n", action)
+		fmt.Fprintf(os.Stderr, "Usage: artifactor %s [--dump] [--dry-run] [--image <ref>] [--namespace <ns>] [--customer-name <name>] [--cluster-name <name>] [--openshift] [--db-ca-cert <pem>] [--image-token-env[=VAR]]\n", action)
 		fs.PrintDefaults()
 		if action == "install" {
 			fmt.Fprintf(os.Stderr, `
@@ -267,7 +271,7 @@ Then install with the CA configured:
 		caCertData = strings.TrimSpace(string(pem))
 	}
 
-	data, err := renderManifests(*image, secretData, *namespace, *customerName, *clusterName, *openshift, caCertData)
+	data, err := renderManifests(*image, secretData, *namespace, *customerName, *clusterName, *openshift, caCertData, action == "uninstall")
 	if err != nil {
 		log.Fatalf("%s: render manifests: %v", action, err)
 	}
@@ -284,12 +288,30 @@ Then install with the CA configured:
 	if action == "uninstall" {
 		verb = "delete"
 	}
-	cmd := exec.Command("kubectl", verb, "-f", "-")
+	cmd := exec.Command("kubectl", kubectlArgs(action, *dryRun)...)
 	cmd.Stdin = bytes.NewReader(data)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		log.Fatalf("%s: kubectl %s failed: %v", action, verb, err)
 	}
-	logx.Infof("%s complete", action)
+	if *dryRun {
+		logx.Infof("%s dry run complete (nothing was changed)", action)
+	} else {
+		logx.Infof("%s complete", action)
+	}
+}
+
+// kubectlArgs builds the kubectl arguments for applying or deleting the
+// rendered manifests, optionally as a client-side dry run.
+func kubectlArgs(action string, dryRun bool) []string {
+	verb := "apply"
+	if action == "uninstall" {
+		verb = "delete"
+	}
+	args := []string{verb}
+	if dryRun {
+		args = append(args, "--dry-run=client")
+	}
+	return append(args, "-f", "-")
 }

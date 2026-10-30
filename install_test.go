@@ -11,7 +11,7 @@ import (
 )
 
 func TestRenderManifests(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "", "", false, "")
+	data, err := renderManifests("", "", "artifactor", "", "", false, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestRenderManifests(t *testing.T) {
 }
 
 func TestRenderManifestsNamespace(t *testing.T) {
-	data, err := renderManifests("", "", "team-a", "", "", false, "")
+	data, err := renderManifests("", "", "team-a", "", "", false, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,8 +62,24 @@ func TestRenderManifestsNamespace(t *testing.T) {
 	}
 }
 
+func TestRenderManifestsSkipNamespace(t *testing.T) {
+	data, err := renderManifests("", "", "artifactor", "", "", false, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "kind: Namespace") {
+		t.Error("rendered manifests still include the Namespace (uninstall must keep it)")
+	}
+	for _, want := range []string{"kind: Deployment", "kind: ServiceAccount", "kind: ClusterRole"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("manifests missing %q", want)
+		}
+	}
+}
+
 func TestRenderManifestsImageOverride(t *testing.T) {
-	data, err := renderManifests("registry.example.com/team/artifactor:v9", "", "artifactor", "", "", false, "")
+	data, err := renderManifests("registry.example.com/team/artifactor:v9", "", "artifactor", "", "", false, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +93,7 @@ func TestRenderManifestsImageOverride(t *testing.T) {
 }
 
 func TestRenderManifestsNamesEnv(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "Acme Corp", "prod-eks", false, "")
+	data, err := renderManifests("", "", "artifactor", "Acme Corp", "prod-eks", false, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +114,7 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 	}
 
 	// unset flags leave the manifest defaults alone
-	data, err = renderManifests("", "", "artifactor", "", "", false, "")
+	data, err = renderManifests("", "", "artifactor", "", "", false, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +123,7 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 	}
 
 	// quotes and backslashes in the value are escaped
-	data, err = renderManifests("", "", "artifactor", `Acme "X"\Y`, "", false, "")
+	data, err = renderManifests("", "", "artifactor", `Acme "X"\Y`, "", false, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +134,7 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 
 func TestRenderManifestsOpenshift(t *testing.T) {
 	// without --openshift the SCC manifests are not rendered
-	data, err := renderManifests("", "", "artifactor", "", "", false, "")
+	data, err := renderManifests("", "", "artifactor", "", "", false, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +143,7 @@ func TestRenderManifestsOpenshift(t *testing.T) {
 	}
 
 	// with --openshift they are, and the subject namespace follows --namespace
-	data, err = renderManifests("", "", "team-a", "", "", true, "")
+	data, err = renderManifests("", "", "team-a", "", "", true, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +168,7 @@ func TestRenderManifestsOpenshift(t *testing.T) {
 func TestRenderManifestsDBCACert(t *testing.T) {
 	// without the CA data the ConfigMap is not rendered and the deployment
 	// keeps the empty DB_CA_CERT env
-	data, err := renderManifests("", "", "artifactor", "", "", false, "")
+	data, err := renderManifests("", "", "artifactor", "", "", false, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +177,7 @@ func TestRenderManifestsDBCACert(t *testing.T) {
 	}
 
 	pem := "-----BEGIN CERTIFICATE-----\nMIIBfakecert\n-----END CERTIFICATE-----"
-	data, err = renderManifests("", "", "team-a", "", "", false, pem)
+	data, err = renderManifests("", "", "team-a", "", "", false, pem, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,6 +200,32 @@ func TestRenderManifestsDBCACert(t *testing.T) {
 	}
 	if strings.Contains(text, "DB_CA_MOUNT_PLACEHOLDER") || strings.Contains(text, "DB_CA_VOLUME_PLACEHOLDER") {
 		t.Error("deployment placeholders not replaced with the CA volume/mount")
+	}
+}
+
+func TestKubectlArgs(t *testing.T) {
+	cases := []struct {
+		action string
+		dryRun bool
+		want   []string
+	}{
+		{"install", false, []string{"apply", "-f", "-"}},
+		{"uninstall", false, []string{"delete", "-f", "-"}},
+		{"install", true, []string{"apply", "--dry-run=client", "-f", "-"}},
+		{"uninstall", true, []string{"delete", "--dry-run=client", "-f", "-"}},
+	}
+	for _, c := range cases {
+		got := kubectlArgs(c.action, c.dryRun)
+		if len(got) != len(c.want) {
+			t.Errorf("kubectlArgs(%s, %v) = %v, want %v", c.action, c.dryRun, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("kubectlArgs(%s, %v) = %v, want %v", c.action, c.dryRun, got, c.want)
+				break
+			}
+		}
 	}
 }
 
@@ -231,7 +273,7 @@ func TestRenderManifestsWithSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := renderManifests("", secretData, "artifactor", "", "", false, "")
+	data, err := renderManifests("", secretData, "artifactor", "", "", false, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,6 +316,9 @@ func TestInstallDump(t *testing.T) {
 	})
 	if !strings.Contains(out, "image: img:v1") {
 		t.Error("uninstall --dump --image did not apply the override")
+	}
+	if strings.Contains(out, "kind: Namespace") {
+		t.Error("uninstall --dump must not delete the namespace")
 	}
 
 	out = captureStdout(t, func() {

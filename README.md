@@ -14,6 +14,9 @@ $ ./artifactor --export my-cluster
 $ xdg-open my-cluster/scan.html
 ```
 
+> [!TIP]
+> If chrome is crashing, try firefox.
+
 O diretorio `my-cluster` é criado contendo o relatorio estatico e auto-contido do scan completo. Basta enviar ao cliente ou usar para analisar as imagens;
 Abaixo está a arvore de arquivos criadas com o scan apenas dos namespaces `flux-system` e `metallb-system`:
 

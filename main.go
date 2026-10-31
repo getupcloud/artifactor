@@ -101,6 +101,7 @@ func runScanCmd(args []string) {
 		inClusterForce  = fs.Bool("in-cluster-force", envBool("IN_CLUSTER_FORCE", false), "with --in-cluster: overwrite existing scan resources and remove them afterwards without asking")
 		inClusterImage  = fs.String("in-cluster-image", envStr("IN_CLUSTER_IMAGE", ""), "container image for the in-cluster scan pod (default: the image of the artifactor deployment manifest)")
 		imagePullPolicy = fs.String("image-pull-policy", envStr("IMAGE_PULL_POLICY", "IfNotPresent"), "imagePullPolicy of the in-cluster scan pod (Always, IfNotPresent or Never)")
+		openshift       = fs.Bool("openshift", envBool("OPENSHIFT", false), "with --in-cluster: apply the OpenShift/OKD SecurityContextConstraints + RBAC manifests for the scan pod (requires cluster-admin)")
 		exportTar       = fs.String("export-tar", "", "internal: create a .tar.gz of the export directory at this path (used by the in-cluster scan pod)")
 		hold            = fs.Bool("hold", false, "internal: keep the container alive after the export completes (used by the in-cluster scan pod)")
 		fromSBOM        = fs.String("from-sbom", envStr("FROM_SBOM", ""), "scan an SBOM file or all files of a directory (non-recursive) with grype only, skipping syft and image download")
@@ -184,6 +185,7 @@ func runScanCmd(args []string) {
 			ExportAll:       *exportAll,
 			ExportCSV:       *exportCSV,
 			OpenCmd:         *openReport,
+			OpenShift:       *openshift,
 		})
 		if err != nil {
 			fatalf("in-cluster scan: %v", err)

@@ -9,7 +9,46 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+func TestDecodeOpenshiftManifests(t *testing.T) {
+	objs, err := decodeOpenshiftManifests()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objs) != 3 {
+		t.Fatalf("decoded %d objects, want 3", len(objs))
+	}
+	kinds := map[string]bool{}
+	names := map[string]bool{}
+	for _, obj := range objs {
+		kinds[obj.GetObjectKind().GroupVersionKind().Kind] = true
+		if meta, ok := obj.(metav1.Object); ok {
+			names[meta.GetName()] = true
+		}
+	}
+	for _, want := range []string{"SecurityContextConstraints", "ClusterRole", "ClusterRoleBinding"} {
+		if !kinds[want] {
+			t.Errorf("missing kind %s", want)
+		}
+	}
+	for _, want := range []string{"artifactor", "artifactor-scc"} {
+		if !names[want] {
+			t.Errorf("missing name %s", want)
+		}
+	}
+	// the SCC is not in the client-go scheme: it must decode as unstructured
+	for _, obj := range objs {
+		if obj.GetObjectKind().GroupVersionKind().Kind == "SecurityContextConstraints" {
+			if _, ok := obj.(*unstructured.Unstructured); !ok {
+				t.Errorf("SCC decoded as %T, want *unstructured.Unstructured", obj)
+			}
+		}
+	}
+}
 
 func TestScanPodArgs(t *testing.T) {
 	args := scanPodArgs(inClusterOpts{
@@ -56,7 +95,7 @@ func TestScanPodArgs(t *testing.T) {
 		}
 	}
 	// local-only paths must not leak into the pod
-	for _, forbidden := range []string{"/local/ca.pem", "--in-cluster", "--port", "--open"} {
+	for _, forbidden := range []string{"/local/ca.pem", "--in-cluster", "--port", "--open", "--openshift"} {
 		if strings.Contains(joined, forbidden) {
 			t.Errorf("args must not contain %q:\n%s", forbidden, joined)
 		}

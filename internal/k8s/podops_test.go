@@ -7,11 +7,50 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
 func newTestClient() *Client {
-	return &Client{cs: fake.NewSimpleClientset()}
+	return &Client{cs: k8sfake.NewSimpleClientset(), dyn: fake.NewSimpleDynamicClient(runtime.NewScheme())}
+}
+
+func TestApplyObjectUnstructured(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient()
+
+	scc := &unstructured.Unstructured{}
+	scc.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "security.openshift.io", Version: "v1", Kind: "SecurityContextConstraints",
+	})
+	scc.SetName("artifactor")
+
+	existed, err := c.ApplyObject(ctx, scc, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if existed {
+		t.Fatal("new SCC reported as existing")
+	}
+	existed, err = c.ApplyObject(ctx, scc, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !existed {
+		t.Fatal("existing SCC reported as new")
+	}
+}
+
+func TestApplyObjectUnsupportedUnstructuredKind(t *testing.T) {
+	c := newTestClient()
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
+	if _, err := c.ApplyObject(context.Background(), obj, false); err == nil {
+		t.Fatal("expected error for unsupported unstructured kind")
+	}
 }
 
 func TestApplyObjectNamespace(t *testing.T) {

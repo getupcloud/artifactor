@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	k8sscheme "k8s.io/client-go/kubernetes/scheme"
@@ -68,6 +69,7 @@ type inClusterOpts struct {
 	ExportAll       string
 	ExportCSV       string
 	OpenCmd         string
+	OpenShift       bool
 }
 
 var deploymentImageExtractPattern = regexp.MustCompile(`(?m)^\s+image:\s*(\S+)`)
@@ -168,6 +170,26 @@ func runInClusterScan(ctx context.Context, o inClusterOpts) error {
 			logx.Debugf("reusing existing %s", kind)
 		} else {
 			logx.Infof("created %s", kind)
+		}
+	}
+	// OpenShift: the SCC + RBAC that let the scan pod run as uid/gid 65532
+	// (the same manifests `artifactor install --openshift` applies).
+	if o.OpenShift {
+		osObjs, err := decodeOpenshiftManifests()
+		if err != nil {
+			return err
+		}
+		for _, obj := range osObjs {
+			existed, err := kc.ApplyObject(ctx, obj, false)
+			if err != nil {
+				return err
+			}
+			label := objectLabel(obj)
+			if existed {
+				logx.Debugf("reusing existing %s", label)
+			} else {
+				logx.Infof("created %s", label)
+			}
 		}
 	}
 	if caCM != nil {
@@ -287,6 +309,50 @@ func decodeManifest(data []byte) (runtime.Object, error) {
 	return obj, nil
 }
 
+// decodeOpenshiftManifests decodes the embedded OpenShift SCC + RBAC
+// manifests (deploy/openshift.yaml.tmpl).
+func decodeOpenshiftManifests() ([]runtime.Object, error) {
+	data, err := manifestsFS.ReadFile("deploy/" + openshiftTemplateName)
+	if err != nil {
+		return nil, err
+	}
+	return decodeManifestDocs(data)
+}
+
+// decodeManifestDocs decodes every YAML document of a multi-document
+// manifest, preferring typed objects and falling back to unstructured for
+// kinds not registered in the client scheme (SecurityContextConstraints).
+func decodeManifestDocs(data []byte) ([]runtime.Object, error) {
+	var objs []runtime.Object
+	for _, doc := range bytes.Split(data, []byte("\n---\n")) {
+		if len(bytes.TrimSpace(doc)) == 0 {
+			continue
+		}
+		obj, _, err := manifestDecoder.Decode(doc, nil, nil)
+		if err != nil {
+			typedErr := err
+			obj, _, err = manifestDecoder.Decode(doc, nil, &unstructured.Unstructured{})
+			if err != nil {
+				return nil, fmt.Errorf("decode manifest document: %w", typedErr)
+			}
+		}
+		objs = append(objs, obj)
+	}
+	return objs, nil
+}
+
+// objectLabel renders "<kind> <name>" for an applied object (used in logs).
+func objectLabel(obj runtime.Object) string {
+	if meta, ok := obj.(metav1.Object); ok {
+		kind := obj.GetObjectKind().GroupVersionKind().Kind
+		if kind == "" {
+			kind = fmt.Sprintf("%T", obj)
+		}
+		return strings.ToLower(kind) + " " + meta.GetName()
+	}
+	return fmt.Sprintf("%T", obj)
+}
+
 // deploymentImage extracts the container image of the embedded deployment
 // manifest (the image used by `artifactor install`).
 func deploymentImage() string {
@@ -317,6 +383,12 @@ func buildScanPod(image string, o inClusterOpts, withCA bool) *corev1.Pod {
 		Args:            scanPodArgs(o),
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "data", MountPath: "/data"},
+		},
+		// same hardening as the artifactor deployment (also required by the
+		// OpenShift artifactor SCC)
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: boolPtr(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
@@ -358,6 +430,9 @@ func buildScanPod(image string, o inClusterOpts, withCA bool) *corev1.Pod {
 				RunAsNonRoot: boolPtr(true),
 				RunAsUser:    int64Ptr(65532),
 				FSGroup:      int64Ptr(65532),
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
 			},
 			ImagePullSecrets: []corev1.LocalObjectReference{{Name: "artifactor-docker-image-token"}},
 			Containers:       []corev1.Container{container},

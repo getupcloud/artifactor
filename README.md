@@ -108,6 +108,7 @@ Dockerfile / Makefile       build da imagem e automação
 | `--in-cluster-force` | `IN_CLUSTER_FORCE` | `false` | com `--in-cluster`: sobrescreve recursos existentes e remove tudo no fim **sem perguntar** |
 | `--in-cluster-image` | `IN_CLUSTER_IMAGE` | imagem do deployment | imagem do pod de scan (a imagem precisa conter o `artifactor` com suporte a `--export-tar` e ao subcomando interno `cat`) |
 | `--image-pull-policy` | `IMAGE_PULL_POLICY` | `IfNotPresent` | `imagePullPolicy` do pod do `--in-cluster` (`Always`, `IfNotPresent` ou `Never`) |
+| `--openshift` | `OPENSHIFT` | `false` | com `--in-cluster`: aplica os manifests OpenShift/OKD (`SecurityContextConstraints` + RBAC) que permitem o pod de scan rodar (requer cluster-admin) |
 | `--platform` | `PLATFORM` | `linux/<GOARCH>` | plataforma da imagem a escanear |
 | `--scan-timeout` | `SCAN_TIMEOUT` | `15m` | timeout por imagem |
 | `--export-html <arquivo>` | `EXPORT_HTML` | — | escaneia uma vez, exporta o relatório em um único HTML auto-contido e sai |
@@ -147,7 +148,7 @@ artifactor scan --in-cluster --export relatorio/ --customer-name acme --grype-db
 ```
 
 Fluxo:
-1. O artifactor cria um **pod** `artifactor-scan` no namespace `artifactor` (junto com namespace/SA/RBAC quando ainda não existem) rodando o scan com os mesmos parâmetros — exceto `--export` e `--db-dir`, reescritos para caminhos dentro do pod. Com `--db-ca-cert`, o certificado é copiado para o pod via **ConfigMap** (API do Kubernetes).
+1. O artifactor cria um **pod** `artifactor-scan` no namespace `artifactor` (junto com namespace/SA/RBAC quando ainda não existem) rodando o scan com os mesmos parâmetros — exceto `--export` e `--db-dir`, reescritos para caminhos dentro do pod. Com `--db-ca-cert`, o certificado é copiado para o pod via **ConfigMap** (API do Kubernetes). Em clusters **OpenShift/OKD**, passe também `--openshift` para aplicar o `SecurityContextConstraints` + RBAC que permitem o pod rodar.
 2. O pod executa o scan e compacta todo o diretório de `--export` em um **`.tar.gz`** (flag interna `--export-tar`).
 3. Os logs do pod (**stdout + stderr**, fundidos pelo runtime) são exibidos no terminal local conforme produzidos (polling de 2s via API do Kubernetes, com `SinceTime` para não repetir linhas); o processo **baixa o `.tar.gz` via API do Kubernetes** (exec `artifactor cat`) e extrai no diretório local de `--export` (o `.tar.gz` fica em `<dir>.tar.gz`). Com `--open`, o `scan.html` baixado é aberto localmente.
 4. No fim, o pod e o ConfigMap da CA são removidos — **perguntando antes** (use `--in-cluster-force` para sobrescrever recursos existentes e remover sem perguntar).

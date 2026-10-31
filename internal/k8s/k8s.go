@@ -13,6 +13,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -22,6 +23,7 @@ import (
 type Client struct {
 	cs  kubernetes.Interface
 	cfg *rest.Config
+	dyn dynamic.Interface
 }
 
 // Instance identifies one workload (namespace + controller) that runs an image.
@@ -66,7 +68,11 @@ func New() (*Client, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("create kubernetes client: %w", err)
 	}
-	return &Client{cs: cs, cfg: cfg}, mode, nil
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, "", fmt.Errorf("create dynamic kubernetes client: %w", err)
+	}
+	return &Client{cs: cs, cfg: cfg, dyn: dyn}, mode, nil
 }
 
 // Discover lists pods (restricted to the given namespaces, or all namespaces

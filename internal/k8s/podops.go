@@ -9,6 +9,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
@@ -43,9 +44,44 @@ func (c *Client) ApplyObject(ctx context.Context, obj runtime.Object, overwrite 
 		})
 	case *corev1.ConfigMap:
 		return c.applyConfigMap(ctx, o, overwrite)
+	case *unstructured.Unstructured:
+		return c.applyUnstructured(ctx, o)
 	default:
 		return false, fmt.Errorf("unsupported object type %T", obj)
 	}
+}
+
+// applyUnstructured creates or reuses an unstructured object via the dynamic
+// client. Only the cluster-scoped infra kinds used by the in-cluster scan
+// (the OpenShift SecurityContextConstraints) are supported; like the other
+// infra objects they are never overwritten.
+func (c *Client) applyUnstructured(ctx context.Context, obj *unstructured.Unstructured) (bool, error) {
+	resource, ok := unstructuredResourceNames[obj.GetKind()]
+	if !ok {
+		return false, fmt.Errorf("unsupported unstructured kind %q", obj.GetKind())
+	}
+	gvr := obj.GroupVersionKind().GroupVersion().WithResource(resource)
+	_, err := c.dyn.Resource(gvr).Get(ctx, obj.GetName(), metav1.GetOptions{})
+	if err == nil {
+		return true, nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("get %s %q: %w", resource, obj.GetName(), err)
+	}
+	if _, err := c.dyn.Resource(gvr).Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("create %s %q: %w", resource, obj.GetName(), err)
+	}
+	return false, nil
+}
+
+// unstructuredResourceNames maps unstructured kinds used by the in-cluster
+// scan to their API resource names (the OpenShift SCC is not part of the
+// client-go scheme, so it is handled via the dynamic client).
+var unstructuredResourceNames = map[string]string{
+	"SecurityContextConstraints": "securitycontextconstraints",
 }
 
 // applyCore creates an infra object when it does not exist yet; an existing

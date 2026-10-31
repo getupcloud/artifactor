@@ -104,6 +104,10 @@ Dockerfile / Makefile       build da imagem e automação
 | `--db-auto-update` | `DB_AUTO_UPDATE` | `true` | baixa/atualiza o banco grype na inicialização |
 | `--grype-db-direct-download` | `GRYPE_DB_DIRECT_DOWNLOAD` | `false` | baixa o banco grype e seus metadados (`latest.json` + arquivo) diretamente via HTTP(S), sem a biblioteca de download do grype; respeita `--insecure-skip-tls` e `--db-ca-cert` |
 | `--ignore-grype-db-unavailable` | `IGNORE_GRYPE_DB_UNAVAILABLE` | `false` | continua servindo quando o banco grype não está disponível e não pôde ser baixado (os scans falham até ele ficar disponível); sem a flag, o artifactor encerra |
+| `--in-cluster` | `IN_CLUSTER` | `false` | executa o scan **dentro do cluster** em um pod temporário com os mesmos parâmetros (requer `--export <dir>`); o relatório é empacotado em `.tar.gz` no pod, baixado via API do Kubernetes e extraído localmente |
+| `--in-cluster-force` | `IN_CLUSTER_FORCE` | `false` | com `--in-cluster`: sobrescreve recursos existentes e remove tudo no fim **sem perguntar** |
+| `--in-cluster-image` | `IN_CLUSTER_IMAGE` | imagem do deployment | imagem do pod de scan (a imagem precisa conter o `artifactor` com suporte a `--export-tar` e ao subcomando interno `cat`) |
+| `--image-pull-policy` | `IMAGE_PULL_POLICY` | `IfNotPresent` | `imagePullPolicy` do pod do `--in-cluster` (`Always`, `IfNotPresent` ou `Never`) |
 | `--platform` | `PLATFORM` | `linux/<GOARCH>` | plataforma da imagem a escanear |
 | `--scan-timeout` | `SCAN_TIMEOUT` | `15m` | timeout por imagem |
 | `--export-html <arquivo>` | `EXPORT_HTML` | — | escaneia uma vez, exporta o relatório em um único HTML auto-contido e sai |
@@ -133,6 +137,20 @@ Depois do port-forward, abra **http://localhost:8080**.
   - `artifactor --export-grype grype/` — um relatório grype (JSON) por imagem
   - `artifactor --export export/` — os três: `scan.html` + `sbom/` + `grype/`
   - ou `make export` (equivale ao `--export export/`)
+
+### Scan dentro do cluster (`--in-cluster`)
+
+Quando a máquina local não alcança os registries (ou o banco grype), o scan pode rodar **dentro do cluster** com os mesmos parâmetros:
+
+```bash
+artifactor scan --in-cluster --export relatorio/ --customer-name acme --grype-db-direct-download
+```
+
+Fluxo:
+1. O artifactor cria um **pod** `artifactor-scan` no namespace `artifactor` (junto com namespace/SA/RBAC quando ainda não existem) rodando o scan com os mesmos parâmetros — exceto `--export` e `--db-dir`, reescritos para caminhos dentro do pod. Com `--db-ca-cert`, o certificado é copiado para o pod via **ConfigMap** (API do Kubernetes).
+2. O pod executa o scan e compacta todo o diretório de `--export` em um **`.tar.gz`** (flag interna `--export-tar`).
+3. Os logs do pod (**stdout + stderr**, fundidos pelo runtime) são exibidos no terminal local conforme produzidos (polling de 2s via API do Kubernetes, com `SinceTime` para não repetir linhas); o processo **baixa o `.tar.gz` via API do Kubernetes** (exec `artifactor cat`) e extrai no diretório local de `--export` (o `.tar.gz` fica em `<dir>.tar.gz`). Com `--open`, o `scan.html` baixado é aberto localmente.
+4. No fim, o pod e o ConfigMap da CA são removidos — **perguntando antes** (use `--in-cluster-force` para sobrescrever recursos existentes e remover sem perguntar).
 
 A imagem é construída e publicada pelo **GoReleaser** (`.goreleaser.yaml`): binário estático linux/amd64 + arm64 e manifest multi-arch no ghcr.io (o workflow do GitHub Actions roda a cada push no `main` e em tags `v*`). Localmente: `make docker-build` (snapshot, sem push) ou, para publicar, crie uma tag e rode `make docker-push` com login no registry.
 

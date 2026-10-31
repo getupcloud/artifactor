@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"regexp"
@@ -55,6 +54,10 @@ var (
 )
 
 var deploymentImagePattern = regexp.MustCompile(`(?m)^(\s+image:\s*)\S+.*$`)
+
+// deploymentImagePullPolicyPattern matches the imagePullPolicy line of the
+// deployment manifest so it can be overridden by --image-pull-policy.
+var deploymentImagePullPolicyPattern = regexp.MustCompile(`(?m)^(\s+imagePullPolicy:\s*)\S+.*$`)
 
 // namespaceFieldPattern matches the namespace field of every namespaced
 // manifest (including the subject of the ClusterRoleBinding); resource
@@ -127,7 +130,7 @@ func dockerConfigSecretData(token string) (string, error) {
 // env values of the deployment. The imagePullSecret template is included
 // only when secretData is non-empty (rendered first, before the deployment
 // that references it).
-func renderManifests(image, secretData, namespace, customerName, clusterName string, openshift bool, caCertData string, skipNamespace bool) ([]byte, error) {
+func renderManifests(image, secretData, namespace, customerName, clusterName string, openshift bool, caCertData string, skipNamespace bool, imagePullPolicy string) ([]byte, error) {
 	entries, err := manifestsFS.ReadDir("deploy")
 	if err != nil {
 		return nil, err
@@ -171,6 +174,9 @@ func renderManifests(image, secretData, namespace, customerName, clusterName str
 			if image != "" {
 				data = deploymentImagePattern.ReplaceAll(data, []byte("${1}"+image))
 			}
+			if imagePullPolicy != "" {
+				data = deploymentImagePullPolicyPattern.ReplaceAll(data, []byte("${1}"+imagePullPolicy))
+			}
 			if customerName != "" {
 				data = setDeploymentEnv(data, "CUSTOMER_NAME", customerName)
 			}
@@ -201,6 +207,7 @@ func runInstallCmd(action string, args []string) {
 	dump := fs.Bool("dump", false, "only print the manifests to stdout without applying them")
 	dryRun := fs.Bool("dry-run", false, "validate the manifests with kubectl --dry-run=client without applying anything")
 	image := fs.String("image", "", "override the container image in the deployment manifest")
+	imagePullPolicy := fs.String("image-pull-policy", "IfNotPresent", "container image pull policy written into the deployment manifest (Always, IfNotPresent or Never)")
 	namespace := fs.String("namespace", "artifactor", "namespace to install the manifests into")
 	customerName := fs.String("customer-name", "", "set the CUSTOMER_NAME env of the deployment (shown in the execution logs and report title)")
 	clusterName := fs.String("cluster-name", "", "set the CLUSTER_NAME env of the deployment (shown in the execution logs and report title)")
@@ -210,7 +217,7 @@ func runInstallCmd(action string, args []string) {
 	imageTokenEnv := fs.String("image-token-env", "", "read a registry token from this environment variable (default: GH_TOKEN, then GITHUB_TOKEN) and include the artifactor-docker-image-token imagePullSecret manifest")
 	fs.Lookup("image-token-env").NoOptDefVal = "auto"
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: artifactor %s [--dump] [--dry-run] [--image <ref>] [--namespace <ns>] [--customer-name <name>] [--cluster-name <name>] [--openshift] [--db-ca-cert <pem>] [--image-token-env[=VAR]]\n", action)
+		fmt.Fprintf(os.Stderr, "Usage: artifactor %s [--dump] [--dry-run] [--image <ref>] [--image-pull-policy <policy>] [--namespace <ns>] [--customer-name <name>] [--cluster-name <name>] [--openshift] [--db-ca-cert <pem>] [--image-token-env[=VAR]]\n", action)
 		fs.PrintDefaults()
 		if action == "install" {
 			fmt.Fprintf(os.Stderr, `
@@ -229,12 +236,15 @@ Then install with the CA configured:
 		os.Exit(2)
 	}
 	if *namespace == "" {
-		log.Fatalf("%s: --namespace cannot be empty", action)
+		fatalf("%s: --namespace cannot be empty", action)
+	}
+	if _, err := parseImagePullPolicy(*imagePullPolicy); err != nil {
+		fatalf("%s: --image-pull-policy: %v", action, err)
 	}
 	if *logLevel != "" {
 		lvl, err := logx.Parse(*logLevel)
 		if err != nil {
-			log.Fatalf("%s: --log-level: %v", action, err)
+			fatalf("%s: --log-level: %v", action, err)
 		}
 		logx.Set(lvl)
 	}
@@ -253,11 +263,11 @@ Then install with the CA configured:
 			}
 		}
 		if token == "" {
-			log.Fatalf("%s: none of the environment variables %s is set (needed for --image-token-env)", action, strings.Join(envNames, ", "))
+			fatalf("%s: none of the environment variables %s is set (needed for --image-token-env)", action, strings.Join(envNames, ", "))
 		}
 		s, err := dockerConfigSecretData(token)
 		if err != nil {
-			log.Fatalf("%s: build imagePullSecret: %v", action, err)
+			fatalf("%s: build imagePullSecret: %v", action, err)
 		}
 		secretData = s
 	}
@@ -266,14 +276,14 @@ Then install with the CA configured:
 	if *dbCaCert != "" {
 		pem, err := os.ReadFile(*dbCaCert)
 		if err != nil {
-			log.Fatalf("%s: read --db-ca-cert: %v", action, err)
+			fatalf("%s: read --db-ca-cert: %v", action, err)
 		}
 		caCertData = strings.TrimSpace(string(pem))
 	}
 
-	data, err := renderManifests(*image, secretData, *namespace, *customerName, *clusterName, *openshift, caCertData, action == "uninstall")
+	data, err := renderManifests(*image, secretData, *namespace, *customerName, *clusterName, *openshift, caCertData, action == "uninstall", *imagePullPolicy)
 	if err != nil {
-		log.Fatalf("%s: render manifests: %v", action, err)
+		fatalf("%s: render manifests: %v", action, err)
 	}
 	if *dump {
 		_, _ = os.Stdout.Write(data)
@@ -281,7 +291,7 @@ Then install with the CA configured:
 	}
 
 	if _, err := exec.LookPath("kubectl"); err != nil {
-		log.Fatalf("%s: kubectl not found in PATH (required to apply the manifests; use --dump to print them instead)", action)
+		fatalf("%s: kubectl not found in PATH (required to apply the manifests; use --dump to print them instead)", action)
 	}
 
 	verb := "apply"
@@ -293,7 +303,7 @@ Then install with the CA configured:
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		log.Fatalf("%s: kubectl %s failed: %v", action, verb, err)
+		fatalf("%s: kubectl %s failed: %v", action, verb, err)
 	}
 	if *dryRun {
 		logx.Infof("%s dry run complete (nothing was changed)", action)

@@ -20,7 +20,8 @@ import (
 
 // Client wraps the official Kubernetes client.
 type Client struct {
-	cs kubernetes.Interface
+	cs  kubernetes.Interface
+	cfg *rest.Config
 }
 
 // Instance identifies one workload (namespace + controller) that runs an image.
@@ -65,7 +66,7 @@ func New() (*Client, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("create kubernetes client: %w", err)
 	}
-	return &Client{cs: cs}, mode, nil
+	return &Client{cs: cs, cfg: cfg}, mode, nil
 }
 
 // Discover lists pods (restricted to the given namespaces, or all namespaces

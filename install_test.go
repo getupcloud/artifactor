@@ -11,7 +11,7 @@ import (
 )
 
 func TestRenderManifests(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "", "", false, "", false)
+	data, err := renderManifests("", "", "artifactor", "", "", false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestRenderManifests(t *testing.T) {
 }
 
 func TestRenderManifestsNamespace(t *testing.T) {
-	data, err := renderManifests("", "", "team-a", "", "", false, "", false)
+	data, err := renderManifests("", "", "team-a", "", "", false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestRenderManifestsNamespace(t *testing.T) {
 }
 
 func TestRenderManifestsSkipNamespace(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "", "", false, "", true)
+	data, err := renderManifests("", "", "artifactor", "", "", false, "", true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestRenderManifestsSkipNamespace(t *testing.T) {
 }
 
 func TestRenderManifestsImageOverride(t *testing.T) {
-	data, err := renderManifests("registry.example.com/team/artifactor:v9", "", "artifactor", "", "", false, "", false)
+	data, err := renderManifests("registry.example.com/team/artifactor:v9", "", "artifactor", "", "", false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,8 +92,31 @@ func TestRenderManifestsImageOverride(t *testing.T) {
 	}
 }
 
+func TestRenderManifestsImagePullPolicyOverride(t *testing.T) {
+	data, err := renderManifests("", "", "artifactor", "", "", false, "", false, "Always")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "imagePullPolicy: Always") {
+		t.Error("imagePullPolicy override not applied")
+	}
+	if strings.Contains(text, "imagePullPolicy: IfNotPresent") {
+		t.Error("original imagePullPolicy still present after override")
+	}
+
+	// empty value keeps the manifest value untouched
+	data, err = renderManifests("", "", "artifactor", "", "", false, "", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "imagePullPolicy: IfNotPresent") {
+		t.Error("manifest imagePullPolicy missing when not overridden")
+	}
+}
+
 func TestRenderManifestsNamesEnv(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "Acme Corp", "prod-eks", false, "", false)
+	data, err := renderManifests("", "", "artifactor", "Acme Corp", "prod-eks", false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +137,7 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 	}
 
 	// unset flags leave the manifest defaults alone
-	data, err = renderManifests("", "", "artifactor", "", "", false, "", false)
+	data, err = renderManifests("", "", "artifactor", "", "", false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +146,7 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 	}
 
 	// quotes and backslashes in the value are escaped
-	data, err = renderManifests("", "", "artifactor", `Acme "X"\Y`, "", false, "", false)
+	data, err = renderManifests("", "", "artifactor", `Acme "X"\Y`, "", false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +157,7 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 
 func TestRenderManifestsOpenshift(t *testing.T) {
 	// without --openshift the SCC manifests are not rendered
-	data, err := renderManifests("", "", "artifactor", "", "", false, "", false)
+	data, err := renderManifests("", "", "artifactor", "", "", false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +166,7 @@ func TestRenderManifestsOpenshift(t *testing.T) {
 	}
 
 	// with --openshift they are, and the subject namespace follows --namespace
-	data, err = renderManifests("", "", "team-a", "", "", true, "", false)
+	data, err = renderManifests("", "", "team-a", "", "", true, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +191,7 @@ func TestRenderManifestsOpenshift(t *testing.T) {
 func TestRenderManifestsDBCACert(t *testing.T) {
 	// without the CA data the ConfigMap is not rendered and the deployment
 	// keeps the empty DB_CA_CERT env
-	data, err := renderManifests("", "", "artifactor", "", "", false, "", false)
+	data, err := renderManifests("", "", "artifactor", "", "", false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +200,7 @@ func TestRenderManifestsDBCACert(t *testing.T) {
 	}
 
 	pem := "-----BEGIN CERTIFICATE-----\nMIIBfakecert\n-----END CERTIFICATE-----"
-	data, err = renderManifests("", "", "team-a", "", "", false, pem, false)
+	data, err = renderManifests("", "", "team-a", "", "", false, pem, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +296,7 @@ func TestRenderManifestsWithSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := renderManifests("", secretData, "artifactor", "", "", false, "", false)
+	data, err := renderManifests("", secretData, "artifactor", "", "", false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}

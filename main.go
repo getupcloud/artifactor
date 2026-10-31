@@ -48,8 +48,16 @@ func main() {
 		case "scan":
 			runScanCmd(os.Args[2:])
 			return
+		case "cat":
+			// internal helper used by `artifactor scan --in-cluster` to
+			// download files from the scan pod (hidden from the usage output)
+			runCatCmd(os.Args[2:])
+			return
 		case "--version", "-v":
 			fmt.Printf("artifactor %s\n", version)
+			return
+		case "--help", "-h", "help":
+			printMainUsage()
 			return
 		}
 		if strings.HasPrefix(os.Args[1], "-") {
@@ -80,38 +88,46 @@ func printMainUsage() {
 func runScanCmd(args []string) {
 	fs := flag.NewFlagSet("artifactor scan", flag.ExitOnError)
 	var (
-		port         = fs.Int("port", envInt("PORT", 8080), "HTTP listen port")
-		namespaceCSV = fs.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in these namespaces (comma-separated list; empty = all namespaces)")
-		interval     = fs.Duration("scan-interval", envDuration("SCAN_INTERVAL", 0), "automatic rescan interval (0 disables)")
-		concurrency  = fs.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
-		dbDir        = fs.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
-		dbUpdate     = fs.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")
-		dbCaCert     = fs.String("db-ca-cert", envStr("DB_CA_CERT", ""), "path to a PEM CA certificate used to verify the grype DB download server (instead of the system roots)")
-		dbDirect     = fs.Bool("grype-db-direct-download", envBool("GRYPE_DB_DIRECT_DOWNLOAD", false), "download the grype vulnerability DB and its metadata directly over HTTP(S), without the grype download library (honors --insecure-skip-tls and --db-ca-cert)")
-		ignoreDB     = fs.Bool("ignore-grype-db-unavailable", envBool("IGNORE_GRYPE_DB_UNAVAILABLE", false), "keep serving when the grype vulnerability DB is unavailable and cannot be downloaded (scans will fail until it is available; without this flag artifactor exits)")
-		fromSBOM     = fs.String("from-sbom", envStr("FROM_SBOM", ""), "scan an SBOM file or all files of a directory (non-recursive) with grype only, skipping syft and image download")
-		dbRefresh    = fs.Duration("db-refresh-interval", envDuration("DB_REFRESH_INTERVAL", 24*time.Hour), "check for grype DB updates on this interval while running (0 disables)")
-		platform     = fs.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
-		scanTimeout  = fs.Duration("scan-timeout", envDuration("SCAN_TIMEOUT", 15*time.Minute), "per-image scan timeout")
-		exportHTML   = fs.String("export-html", envStr("EXPORT_HTML", ""), "run a scan, export the report as a single self-contained HTML file to this path, and exit")
-		exportSBOM   = fs.String("export-sbom", envStr("EXPORT_SBOM", ""), "run a scan, export one syft SBOM (syft-json) per image into this directory, and exit")
-		exportGrype  = fs.String("export-grype", envStr("EXPORT_GRYPE", ""), "run a scan, export one grype JSON report per image into this directory, and exit")
-		exportAll    = fs.String("export", envStr("EXPORT", ""), "run a scan, export the full report (scan.html + sbom/ + grype/) into this directory, and exit")
-		exportCSV    = fs.String("export-csv", envStr("EXPORT_CSV", ""), "run a scan, export the CVE report as CSV to this file, and exit")
-		openReport   = fs.String("open", envStr("OPEN", ""), "open the exported scan.html with this command after --export (default \"xdg-open\"; ${FILE} is replaced by the path)")
-		ecrAuth      = fs.Bool("ecr-auth", envBool("ECR_AUTH", true), "authenticate to AWS ECR registries via the AWS credential chain (IRSA) when no pull secret matches")
-		keepSBOM     = fs.Bool("keep-sbom", envBool("KEEP_SBOM", true), "keep the syft SBOM of each image in memory (needed by --export-sbom; disable to save memory)")
-		insecure     = fs.Bool("insecure-skip-tls", envBool("INSECURE_SKIP_TLS", false), "skip TLS certificate verification for remote servers (image registries, the vulnerability-name refresh and direct grype DB downloads)")
-		customerName = fs.String("customer-name", os.Getenv("CUSTOMER_NAME"), "customer name shown in the execution logs and report title")
-		clusterName  = fs.String("cluster-name", os.Getenv("CLUSTER_NAME"), "cluster name shown in the execution logs and report title")
-		logLevel     = fs.String("log-level", envStr("LOG_LEVEL", "info"), "log verbosity: debug, info, warn or err")
-		showVersion  = fs.Bool("version", false, "print version and exit")
+		port            = fs.Int("port", envInt("PORT", 8080), "HTTP listen port")
+		namespaceCSV    = fs.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in these namespaces (comma-separated list; empty = all namespaces)")
+		interval        = fs.Duration("scan-interval", envDuration("SCAN_INTERVAL", 0), "automatic rescan interval (0 disables)")
+		concurrency     = fs.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
+		dbDir           = fs.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
+		dbUpdate        = fs.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")
+		dbCaCert        = fs.String("db-ca-cert", envStr("DB_CA_CERT", ""), "path to a PEM CA certificate used to verify the grype DB download server (instead of the system roots)")
+		dbDirect        = fs.Bool("grype-db-direct-download", envBool("GRYPE_DB_DIRECT_DOWNLOAD", false), "download the grype vulnerability DB and its metadata directly over HTTP(S), without the grype download library (honors --insecure-skip-tls and --db-ca-cert)")
+		ignoreDB        = fs.Bool("ignore-grype-db-unavailable", envBool("IGNORE_GRYPE_DB_UNAVAILABLE", false), "keep serving when the grype vulnerability DB is unavailable and cannot be downloaded (scans will fail until it is available; without this flag artifactor exits)")
+		inCluster       = fs.Bool("in-cluster", envBool("IN_CLUSTER", false), "run the scan inside the cluster in a temporary pod with the same parameters (requires --export <dir>); the report is packed as a .tar.gz inside the pod, downloaded via the Kubernetes API and extracted locally")
+		inClusterForce  = fs.Bool("in-cluster-force", envBool("IN_CLUSTER_FORCE", false), "with --in-cluster: overwrite existing scan resources and remove them afterwards without asking")
+		inClusterImage  = fs.String("in-cluster-image", envStr("IN_CLUSTER_IMAGE", ""), "container image for the in-cluster scan pod (default: the image of the artifactor deployment manifest)")
+		imagePullPolicy = fs.String("image-pull-policy", envStr("IMAGE_PULL_POLICY", "IfNotPresent"), "imagePullPolicy of the in-cluster scan pod (Always, IfNotPresent or Never)")
+		exportTar       = fs.String("export-tar", "", "internal: create a .tar.gz of the export directory at this path (used by the in-cluster scan pod)")
+		hold            = fs.Bool("hold", false, "internal: keep the container alive after the export completes (used by the in-cluster scan pod)")
+		fromSBOM        = fs.String("from-sbom", envStr("FROM_SBOM", ""), "scan an SBOM file or all files of a directory (non-recursive) with grype only, skipping syft and image download")
+		dbRefresh       = fs.Duration("db-refresh-interval", envDuration("DB_REFRESH_INTERVAL", 24*time.Hour), "check for grype DB updates on this interval while running (0 disables)")
+		platform        = fs.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
+		scanTimeout     = fs.Duration("scan-timeout", envDuration("SCAN_TIMEOUT", 15*time.Minute), "per-image scan timeout")
+		exportHTML      = fs.String("export-html", envStr("EXPORT_HTML", ""), "run a scan, export the report as a single self-contained HTML file to this path, and exit")
+		exportSBOM      = fs.String("export-sbom", envStr("EXPORT_SBOM", ""), "run a scan, export one syft SBOM (syft-json) per image into this directory, and exit")
+		exportGrype     = fs.String("export-grype", envStr("EXPORT_GRYPE", ""), "run a scan, export one grype JSON report per image into this directory, and exit")
+		exportAll       = fs.String("export", envStr("EXPORT", ""), "run a scan, export the full report (scan.html + sbom/ + grype/) into this directory, and exit")
+		exportCSV       = fs.String("export-csv", envStr("EXPORT_CSV", ""), "run a scan, export the CVE report as CSV to this file, and exit")
+		openReport      = fs.String("open", envStr("OPEN", ""), "open the exported scan.html with this command after --export (default \"xdg-open\"; ${FILE} is replaced by the path)")
+		ecrAuth         = fs.Bool("ecr-auth", envBool("ECR_AUTH", true), "authenticate to AWS ECR registries via the AWS credential chain (IRSA) when no pull secret matches")
+		keepSBOM        = fs.Bool("keep-sbom", envBool("KEEP_SBOM", true), "keep the syft SBOM of each image in memory (needed by --export-sbom; disable to save memory)")
+		insecure        = fs.Bool("insecure-skip-tls", envBool("INSECURE_SKIP_TLS", false), "skip TLS certificate verification for remote servers (image registries, the vulnerability-name refresh and direct grype DB downloads)")
+		customerName    = fs.String("customer-name", os.Getenv("CUSTOMER_NAME"), "customer name shown in the execution logs and report title")
+		clusterName     = fs.String("cluster-name", os.Getenv("CLUSTER_NAME"), "cluster name shown in the execution logs and report title")
+		logLevel        = fs.String("log-level", envStr("LOG_LEVEL", "info"), "log verbosity: debug, info, warn or err")
+		showVersion     = fs.Bool("version", false, "print version and exit")
 	)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: artifactor scan [flags]\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	fs.Lookup("open").NoOptDefVal = "xdg-open"
+	fs.Lookup("export-tar").Hidden = true
+	fs.Lookup("hold").Hidden = true
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
@@ -120,13 +136,17 @@ func runScanCmd(args []string) {
 
 	lvl, err := logx.Parse(*logLevel)
 	if err != nil {
-		log.Fatalf("--log-level: %v", err)
+		fatalf("--log-level: %v", err)
 	}
 	logx.Set(lvl)
 
 	if *showVersion {
 		fmt.Printf("artifactor %s\n", version)
 		return
+	}
+
+	if _, err := parseImagePullPolicy(*imagePullPolicy); err != nil {
+		fatalf("--image-pull-policy: %v", err)
 	}
 
 	if *customerName != "" || *clusterName != "" {
@@ -138,6 +158,39 @@ func runScanCmd(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if *inCluster || *inClusterForce {
+		err := runInClusterScan(ctx, inClusterOpts{
+			Force:           *inClusterForce,
+			Image:           *inClusterImage,
+			ImagePullPolicy: *imagePullPolicy,
+			Namespaces:      namespaces,
+			Concurrency:     *concurrency,
+			DBAutoUpdate:    *dbUpdate,
+			DBCACert:        *dbCaCert,
+			DBDirect:        *dbDirect,
+			IgnoreDB:        *ignoreDB,
+			Platform:        *platform,
+			ScanTimeout:     *scanTimeout,
+			ECRAuth:         *ecrAuth,
+			KeepSBOM:        *keepSBOM,
+			Insecure:        *insecure,
+			CustomerName:    *customerName,
+			ClusterName:     *clusterName,
+			LogLevel:        *logLevel,
+			FromSBOM:        *fromSBOM,
+			ExportHTML:      *exportHTML,
+			ExportSBOM:      *exportSBOM,
+			ExportGrype:     *exportGrype,
+			ExportAll:       *exportAll,
+			ExportCSV:       *exportCSV,
+			OpenCmd:         *openReport,
+		})
+		if err != nil {
+			fatalf("in-cluster scan: %v", err)
+		}
+		return
+	}
+
 	if *exportHTML != "" || *exportSBOM != "" || *exportGrype != "" || *exportAll != "" || *exportCSV != "" {
 		err := runExport(ctx, exportRequest{
 			htmlPath: *exportHTML,
@@ -145,9 +198,16 @@ func runScanCmd(args []string) {
 			grypeDir: *exportGrype,
 			allDir:   *exportAll,
 			csvPath:  *exportCSV,
+			tarPath:  *exportTar,
 		}, *dbDir, *dbUpdate, *dbCaCert, *dbDirect, *ignoreDB, *fromSBOM, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *keepSBOM, *insecure, *customerName, *clusterName, *openReport)
 		if err != nil {
-			log.Fatalf("export: %v", err)
+			fatalf("export: %v", err)
+		}
+		if *hold {
+			// keep the container running so the in-cluster CLI can download
+			// the report via exec; pod deletion sends SIGTERM
+			logx.Infof("export done; holding until the report is downloaded (SIGTERM to exit)")
+			<-ctx.Done()
 		}
 		return
 	}
@@ -218,7 +278,7 @@ func runScanCmd(args []string) {
 	go func() {
 		logx.Infof("listening on http://0.0.0.0:%d (access with: kubectl port-forward ...)", *port)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http server: %v", err)
+			fatalf("http server: %v", err)
 		}
 	}()
 
@@ -261,7 +321,7 @@ func runScanCmd(args []string) {
 			if status.Error != "" {
 				msg = fmt.Sprintf("vulnerability database unavailable: %v (update: %s)", dbErr, status.Error)
 			}
-			log.Fatal(msg)
+			fatalf("%s", msg)
 		}
 		built := ""
 		if status.Built != nil {
@@ -362,11 +422,31 @@ type exportRequest struct {
 	grypeDir string // --export-grype: directory for per-image grype JSON reports
 	allDir   string // --export: directory with scan.html + sbom/ + grype/
 	csvPath  string // --export-csv: CVE report as CSV
+	tarPath  string // --export-tar: .tar.gz of the export directory (internal)
+}
+
+// runCatCmd is an internal helper used by `artifactor scan --in-cluster` to
+// download files from the scan pod: it prints the given file to stdout.
+func runCatCmd(args []string) {
+	if len(args) != 1 {
+		fatalf("usage: artifactor cat <file>")
+	}
+	data, err := os.ReadFile(args[0])
+	if err != nil {
+		fatalf("cat: %v", err)
+	}
+	if _, err := os.Stdout.Write(data); err != nil {
+		fatalf("cat: %v", err)
+	}
 }
 
 // runExport implements the --export* flags: prepare the DB, scan every image
 // once, write the requested artifacts, and exit.
 func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, dbCaCert string, dbDirect, ignoreDB bool, fromSBOM string, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, keepSBOM, insecure bool, customerName, clusterName, openCmd string) error {
+	if req.tarPath != "" && req.allDir == "" {
+		return fmt.Errorf("--export-tar requires --export <dir>")
+	}
+
 	var k8sClient *k8s.Client
 	mode := "from-sbom"
 	if fromSBOM == "" {
@@ -493,6 +573,12 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		}
 		logx.Infof("CSV report exported to %s", req.csvPath)
 	}
+	if req.tarPath != "" {
+		if err := tarGzDir(req.allDir, req.tarPath); err != nil {
+			return err
+		}
+		logx.Infof("report tarball written to %s", req.tarPath)
+	}
 	return nil
 }
 
@@ -513,6 +599,24 @@ func openFile(command, file string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Start()
+}
+
+// fatalf logs the message through logx (with the caller's file and line)
+// and exits with status 1 — the logx equivalent of log.Fatalf, keeping every
+// fatal line in the same format as the rest of the log output.
+func fatalf(format string, args ...any) {
+	logx.Errorf(format, args...)
+	os.Exit(1)
+}
+
+// parseImagePullPolicy validates a --image-pull-policy value and returns it
+// normalized (Always, IfNotPresent or Never).
+func parseImagePullPolicy(s string) (string, error) {
+	switch s {
+	case "Always", "IfNotPresent", "Never":
+		return s, nil
+	}
+	return "", fmt.Errorf("invalid image pull policy %q (use Always, IfNotPresent or Never)", s)
 }
 
 // splitNamespaces parses a comma-separated namespace list, trimming spaces,

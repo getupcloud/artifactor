@@ -10,6 +10,12 @@ BIN_DIR    ?= ~/bin
 BIN        ?= bin/artifactor
 SOURCES    := go.mod go.sum *.go $(shell find internal -name '*.go' -type f) $(shell find web -type f)
 
+# IS_LATEST controls the :latest image tag in .goreleaser.yaml. It must
+# always be present in the environment when goreleaser runs (its templates
+# fail on missing env keys), so default it to "false" for local builds;
+# `IS_LATEST=true make docker-build` publishes :latest.
+export IS_LATEST ?= false
+
 
 ifneq ($(REGISTRY),)
 FULL_IMAGE := $(REGISTRY)/$(IMAGE)

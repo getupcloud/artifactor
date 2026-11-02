@@ -17,7 +17,8 @@ SOURCES    := go.mod go.sum *.go $(shell find internal -name '*.go' -type f) $(s
 export IS_LATEST ?= false
 
 # DeepSeek Coder sessions (see SESSION.md): the session container runs as
-# the local host user and the CLI binary is mounted from the host.
+# the local host user; the DeepSeek Code CLI ships inside the image
+# (Dockerfile.session), so no host binary mount is needed.
 SESSION_IMAGE ?= artifactor-session
 DEEPSEEK      ?= deepseek
 
@@ -104,14 +105,14 @@ clean: ## Remove local build artifacts
 	rm -rf bin
 
 build-session: ## Build the session container (host-user dev environment with SESSION.md as session context)
-	docker build -t $(SESSION_IMAGE) \
+	docker build -t $(SESSION_IMAGE) $(BUILD_SESSION_EXTRA_PARAMS) \
 		--build-arg UID=$$(id -u) --build-arg GID=$$(id -g) \
 		-f Dockerfile.session .
 
 start-session: ## Start a DeepSeek Coder session with SESSION.md as the initial context (no memory limit)
 	docker run -it --rm \
 		--memory 0 --memory-swap -1 \
+		-e DEEPSEEK_API_KEY="$$(op item get DEEPSEEK_API_KEY --vault Employee --format json | jq -r '.fields[]|select(.id=="credential").value')" \
 		-u $$(id -u):$$(id -g) \
 		-v "$$PWD:/workspace" -w /workspace \
-		-v "$$(command -v $(DEEPSEEK)):/usr/local/bin/$(DEEPSEEK):ro" \
 		$(SESSION_IMAGE) $(DEEPSEEK) "Read /workspace/SESSION.md, then /workspace/AGENTS.md, /workspace/docs/adr/ and /workspace/specs/ as the initial session context, then wait for instructions."

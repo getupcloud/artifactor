@@ -14,12 +14,10 @@
   e o **client-go** oficial (in-cluster via `kubernetes.default.svc`, fallback
   kubeconfig para dev local).
 - Módulo `github.com/getupcloud/artifactor`; o diretório local do repo é
-  `/workspace/cluster-image-scanner` (nome diferente do módulo).
+  `/workspace` (nome diferente do módulo).
 - Remote: `git@github.com:getupcloud/artifactor.git`.
 - Resultados exibidos numa SPA filtrável (severidade, artefato/pacote, CVE id)
   e exportados como relatórios auto-contidos (HTML/CSV/SBOM/grype).
-- Criado em 2026-10-26 como "cluster-image-scanner", renomeado para
-  artifactor no mesmo dia.
 
 ## 2. Mapa do repositório
 
@@ -91,10 +89,11 @@
   Banco grype cacheado em `/tmp/artifactor-direct-test` (v6.1.10, ~3,2GB,
   morre no reset).
 - Sessões: `make build-session` (container dev, usuário do host — com Go,
-  make/gcc, git, curl, jq, kubectl v1.37 e grype CLI v0.121.0) e
-  `make start-session` (sessão DeepSeek Coder com `SESSION.md` como
-  contexto inicial; repo montado em /workspace; binário do CLI montado do
-  host; `DEEPSEEK ?= deepseek`).
+  make/gcc, git, curl, jq, kubectl v1.37, grype CLI v0.121.0 e o CLI
+  DeepSeek Code `@qingj/deepseekcode` instalado dentro da imagem, exposto
+  como `deepseek`) e `make start-session` (sessão DeepSeek Coder com
+  `SESSION.md` como contexto inicial; repo montado em /workspace; sem
+  dependências do host; `DEEPSEEK ?= deepseek`).
 
 ## 5. Referência de CLI (scan é o subcomando padrão)
 

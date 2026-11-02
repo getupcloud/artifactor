@@ -7,8 +7,10 @@
 # new DeepSeek Coder session that continues the development.
 #
 # Tools included: Go 1.27, build-base (make + gcc), git, bash, curl, jq,
-# kubectl (v1.37.x, matching client-go v0.37.1) and the grype CLI
-# (v0.121.0, matching the embedded library pinned in go.mod).
+# kubectl (v1.37.x, matching client-go v0.37.1), the grype CLI (v0.121.0,
+# matching the embedded library pinned in go.mod) and the DeepSeek Code CLI
+# (@qingj/deepseekcode, exposed as `deepseek`). Everything ships inside the
+# image — the session has no dependencies on the host toolchain.
 #
 # Build:  make build-session   (or: docker build --build-arg UID=$(id -u) \
 #                                --build-arg GID=$(id -g) -f Dockerfile.session .)
@@ -22,7 +24,7 @@ ARG GID=1000
 # Toolchain: build-base brings make + gcc (the project itself builds with
 # CGO_ENABLED=0, but the compilers are useful for the dev loop); curl is
 # needed by the downloads below; jq helps debugging the API payloads.
-RUN apk add --no-cache git bash ca-certificates tzdata build-base curl jq \
+RUN apk add --no-cache git bash ca-certificates tzdata build-base curl jq nodejs npm \
     && addgroup -g ${GID} dev \
     && adduser -D -u ${UID} -G dev -h /workspace dev \
     && mkdir -p /workspace && chown ${UID}:${GID} /workspace
@@ -42,6 +44,14 @@ RUN curl -fsSL \
     | tar -xz -C /usr/local/bin grype \
     && chmod +x /usr/local/bin/grype
 
+# DeepSeek Code CLI (@qingj/deepseekcode) — installed inside the image so
+# `make start-session` has no host dependencies. Version pinned to match the
+# host install. npm exposes `deepseekcode`/`deepseek-code`; add the
+# `deepseek` alias used by the Makefile.
+ARG DEEPSEEKCODE_VERSION=0.1.1
+RUN npm install -g @qingj/deepseekcode@${DEEPSEEKCODE_VERSION} --no-audit --no-fund \
+    && ln -s /usr/local/bin/deepseekcode /usr/local/bin/deepseek
+
 # The session context travels with the image (the live repo copy is mounted
 # at /workspace by `make start-session`).
 COPY SESSION.md /session/SESSION.md
@@ -49,4 +59,11 @@ COPY SESSION.md /session/SESSION.md
 USER ${UID}:${GID}
 WORKDIR /workspace
 
-ENTRYPOINT ["/bin/bash"]
+# CMD (not ENTRYPOINT): `make start-session` passes `deepseek "Read ..."` as
+# the container command. With ENTRYPOINT ["/bin/bash"] docker would wrap it
+# into `bash deepseek ...`, and bash would run the CLI's .mjs as a shell
+# script, ignoring its node shebang ("import: command not found"). As CMD,
+# the explicit command replaces bash and is exec'd directly, so the shebang
+# is honored. `docker run -it IMAGE` (no command) still gives an interactive
+# bash by default.
+CMD ["/bin/bash"]

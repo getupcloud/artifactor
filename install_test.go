@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -459,4 +460,20 @@ func captureStdout(t *testing.T, fn func()) string {
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
 	return string(out)
+}
+
+func TestSetLogPrefix(t *testing.T) {
+	cases := map[[2]string]string{
+		{"", "prod"}:    "artifactor: [/prod] ",
+		{"acme", ""}:    "artifactor: [acme/] ",
+		{"acme", "prd"}: "artifactor: [acme/prd] ",
+		{"", ""}:        "artifactor: ",
+	}
+	for in, want := range cases {
+		setLogPrefix(in[0], in[1])
+		if got := log.Prefix(); got != want {
+			t.Errorf("setLogPrefix(%q, %q) = %q, want %q", in[0], in[1], got, want)
+		}
+	}
+	setLogPrefix("", "") // restore the default
 }

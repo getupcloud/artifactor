@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"regexp"
@@ -235,6 +236,8 @@ Then install with the CA configured:
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
+	setLogPrefix(*customerName, *clusterName)
+	log.SetFlags(log.LstdFlags)
 	if *namespace == "" {
 		fatalf("%s: --namespace cannot be empty", action)
 	}

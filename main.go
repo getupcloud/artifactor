@@ -132,7 +132,7 @@ func runScanCmd(args []string) {
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
-	log.SetPrefix("artifactor: ")
+	setLogPrefix(*customerName, *clusterName)
 	log.SetFlags(log.LstdFlags)
 
 	lvl, err := logx.Parse(*logLevel)
@@ -148,10 +148,6 @@ func runScanCmd(args []string) {
 
 	if _, err := parseImagePullPolicy(*imagePullPolicy); err != nil {
 		fatalf("--image-pull-policy: %v", err)
-	}
-
-	if *customerName != "" || *clusterName != "" {
-		logx.Infof("customer: %q, cluster: %q", *customerName, *clusterName)
 	}
 
 	namespaces := splitNamespaces(*namespaceCSV)
@@ -609,6 +605,17 @@ func openFile(command, file string) error {
 func fatalf(format string, args ...any) {
 	logx.Errorf(format, args...)
 	os.Exit(1)
+}
+
+// setLogPrefix configures the std logger prefix used by every log line:
+// "artifactor: " plus "[customer/cluster]" (from --customer-name and
+// --cluster-name) when at least one of the two is set.
+func setLogPrefix(customerName, clusterName string) {
+	prefix := "artifactor: "
+	if customerName != "" || clusterName != "" {
+		prefix = fmt.Sprintf("artifactor: [%s/%s] ", customerName, clusterName)
+	}
+	log.SetPrefix(prefix)
 }
 
 // parseImagePullPolicy validates a --image-pull-policy value and returns it

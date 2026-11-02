@@ -5,3 +5,7 @@ scan.html
 export/
 *.tar.gz
 *.swp
+.config/
+.deepseek/
+.deepseek-code/
+.npm/

@@ -16,6 +16,11 @@ SOURCES    := go.mod go.sum *.go $(shell find internal -name '*.go' -type f) $(s
 # `IS_LATEST=true make docker-build` publishes :latest.
 export IS_LATEST ?= false
 
+# DeepSeek Coder sessions (see SESSION.md): the session container runs as
+# the local host user and the CLI binary is mounted from the host.
+SESSION_IMAGE ?= artifactor-session
+DEEPSEEK      ?= deepseek
+
 
 ifneq ($(REGISTRY),)
 FULL_IMAGE := $(REGISTRY)/$(IMAGE)
@@ -24,7 +29,7 @@ FULL_IMAGE := $(IMAGE)
 endif
 
 .ONESHELL:
-.PHONY: help build test vet fmt run export bump docker-build docker-push deploy undeploy port-forward logs tidy clean
+.PHONY: help build test vet fmt run export bump docker-build docker-push deploy undeploy port-forward logs tidy clean build-session start-session
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
@@ -97,3 +102,16 @@ tidy: ## Tidy the Go module
 
 clean: ## Remove local build artifacts
 	rm -rf bin
+
+build-session: ## Build the session container (host-user dev environment with SESSION.md as session context)
+	docker build -t $(SESSION_IMAGE) \
+		--build-arg UID=$$(id -u) --build-arg GID=$$(id -g) \
+		-f Dockerfile.session .
+
+start-session: ## Start a DeepSeek Coder session with SESSION.md as the initial context (no memory limit)
+	docker run -it --rm \
+		--memory 0 --memory-swap -1 \
+		-u $$(id -u):$$(id -g) \
+		-v "$$PWD:/workspace" -w /workspace \
+		-v "$$(command -v $(DEEPSEEK)):/usr/local/bin/$(DEEPSEEK):ro" \
+		$(SESSION_IMAGE) $(DEEPSEEK) "Read /workspace/SESSION.md, then /workspace/AGENTS.md, /workspace/docs/adr/ and /workspace/specs/ as the initial session context, then wait for instructions."

@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1
+
+# Session container for `make build-session` / `make start-session`: a
+# development environment that runs as the LOCAL HOST USER (same uid/gid as
+# the host, so files written to the mounted repo keep the correct ownership)
+# and carries the repo's session bootstrap file (SESSION.md), used to start a
+# new DeepSeek Coder session that continues the development.
+#
+# Tools included: Go 1.27, build-base (make + gcc), git, bash, curl, jq,
+# kubectl (v1.37.x, matching client-go v0.37.1) and the grype CLI
+# (v0.121.0, matching the embedded library pinned in go.mod).
+#
+# Build:  make build-session   (or: docker build --build-arg UID=$(id -u) \
+#                                --build-arg GID=$(id -g) -f Dockerfile.session .)
+# Run:    make start-session
+
+FROM golang:1.27-alpine
+
+ARG UID=1000
+ARG GID=1000
+
+# Toolchain: build-base brings make + gcc (the project itself builds with
+# CGO_ENABLED=0, but the compilers are useful for the dev loop); curl is
+# needed by the downloads below; jq helps debugging the API payloads.
+RUN apk add --no-cache git bash ca-certificates tzdata build-base curl jq \
+    && addgroup -g ${GID} dev \
+    && adduser -D -u ${UID} -G dev -h /workspace dev \
+    && mkdir -p /workspace && chown ${UID}:${GID} /workspace
+
+# kubectl — pinned to the Kubernetes line used by the repo (client-go v0.37.1).
+ARG KUBECTL_VERSION=v1.37.0
+RUN curl -fsSLo /usr/local/bin/kubectl \
+      "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')/kubectl" \
+    && chmod +x /usr/local/bin/kubectl
+
+# grype CLI — same version as the embedded Go library (go.mod), so a local
+# `grype db update` or manual scans behave like the app. The vulnerability DB
+# itself is downloaded at runtime (`grype db update` or the app's own flags).
+ARG GRYPE_VERSION=0.121.0
+RUN curl -fsSL \
+      "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+    | tar -xz -C /usr/local/bin grype \
+    && chmod +x /usr/local/bin/grype
+
+# The session context travels with the image (the live repo copy is mounted
+# at /workspace by `make start-session`).
+COPY SESSION.md /session/SESSION.md
+
+USER ${UID}:${GID}
+WORKDIR /workspace
+
+ENTRYPOINT ["/bin/bash"]

@@ -2,7 +2,7 @@
 
 Web app (Pod + Service no Kubernetes) que escaneia **todas as imagens de contêiner rodando no cluster** em busca de CVEs, usando **syft** e **grype como bibliotecas Go embutidas** (nenhum binário externo é instalado) e o **client-go oficial** para falar com a API do cluster via `kubernetes.default.svc`.
 
-O resultado é apresentado em uma **SPA** que permite filtrar os CVEs pelos **nomes dos artefatos (pacotes) encontrados pelo syft**, por severidade e por ID de CVE.
+O resultado é apresentado em uma **SPA** (Single-Page Application) que permite filtrar os CVEs pelos **nomes dos artefatos (pacotes) encontrados pelo syft**, por severidade e por ID de CVE.
 
 > [!IMPORTANT]
 > O comando deve ser executado a partir de um local que tenha acesso tanto a API do cluster através do `kubeconfig`, quanto dos `registros de imagens` de containers que executam no cluster.

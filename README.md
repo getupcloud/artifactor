@@ -22,7 +22,12 @@ $ xdg-open my-cluster/scan.html
 > Se o chrome estiver quebrando, use o firefox. Relatórios grandes (>=1GB total) podem não ser carregados devidamente no chrome.
 > Outra opção é fazer o scan limitado a um ou mais namespaces usando a flag `--namespace ns1,ns2,...`.
 
-O diretorio `my-cluster` é criado contendo o relatorio estatico e auto-contido do scan completo. Basta enviar ao cliente ou usar para analisar as imagens;
+O diretorio `my-cluster` é criado com o relatorio estático e auto-contido do scan completo. Basta abrir o arquivo `scan.html` gerado.
+Os arquivos usados na análise também estão disponíveis nos diretórios `sbom/` e `grype/`.
+
+> [!TIP]
+> Arquivos SBOM podem ser usados posteriormente para scan usando diretamente o grype com o comando `grype path/to/file.sbom`.
+
 Abaixo está a arvore de arquivos criadas com o scan apenas dos namespaces `flux-system` e `metallb-system`:
 
 ```

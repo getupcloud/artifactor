@@ -165,6 +165,34 @@ Para usar sua própria imagem, ajuste `deploy/deployment.yaml` ou:
 kubectl -n artifactor set image deployment/artifactor scanner=ghcr.io/getupcloud/artifactor:0.0.1
 ```
 
+## Desenvolver
+
+Para desenvolver, há uma **sessão de desenvolvimento em container**
+(`make build-session` / `make start-session`): um ambiente completo que roda
+**como o usuário local** (mesmo uid/gid — os arquivos gravados no repo montado
+mantêm o dono correto) e **sem dependências do toolchain do host**.
+
+```bash
+make build-session   # constrói a imagem artifactor-session a partir do Dockerfile.session
+make start-session   # inicia uma sessão DeepSeek Coder com o SESSION.md como contexto inicial
+```
+
+A imagem (`Dockerfile.session`) já embarca tudo o que o desenvolvimento precisa:
+
+- Go, make + gcc, git, bash, curl, jq;
+- `kubectl` (versão alinhada ao client-go do repo) e o CLI `grype` (mesma versão da lib embutida no `go.mod`);
+- python3 + pip e o plugin `security-guidance` (carregado pela sessão via `--plugin-dir`);
+- o CLI DeepSeek Code (instalado na imagem, exposto como `deepseek`).
+
+`make start-session` monta o diretório atual em `/workspace`, injeta a
+`DEEPSEEK_API_KEY` (lida do 1Password via `op`) e inicia o `deepseek` usando o
+`SESSION.md` como bootstrap — que aponta para `AGENTS.md`, `docs/adr/` e
+`specs/` como contexto do projeto. O container é descartável (`--rm`): o estado
+vive no repo montado, não na imagem.
+
+Variáveis: `SESSION_IMAGE` (nome da imagem), `DEEPSEEK` (comando do CLI) e
+`BUILD_SESSION_EXTRA_PARAMS` (parâmetros extras para o `docker build`).
+
 ## Publicação no ghcr.io (tokens)
 
 Os workflows autenticam no ghcr.io preferindo o secret **`GHCR_PAT`** (PAT com scope `write:packages`) e usando `GITHUB_TOKEN` como fallback. Se o push falhar com `denied: permission_denied: read_package` usando o `GITHUB_TOKEN`, uma destas opções resolve:

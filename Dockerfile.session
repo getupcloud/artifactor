@@ -57,6 +57,27 @@ ARG DEEPSEEKCODE_VERSION=0.1.1
 RUN npm install -g @qingj/deepseekcode@${DEEPSEEKCODE_VERSION} --no-audit --no-fund \
     && ln -s /usr/local/bin/deepseekcode /usr/local/bin/deepseek
 
+# ripgrep — the Grep tool in the DeepSeek Code CLI resolves its binary at
+# <dist>/vendor/ripgrep/<arch>-<platform>/rg; the npm package ships no
+# binaries, so install the matching static build at that exact path (same
+# version as the host install). Also exposed on PATH for direct use in the
+# dev loop.
+ARG RIPGREP_VERSION=15.2.0
+RUN case "$(uname -m)" in \
+      x86_64) RG_TARGET="x86_64-unknown-linux-musl"; RG_ARCH="x64" ;; \
+      aarch64) RG_TARGET="aarch64-unknown-linux-musl"; RG_ARCH="arm64" ;; \
+      *) echo "unsupported arch: $(uname -m)"; exit 1 ;; \
+    esac; \
+    curl -fsSLo /tmp/ripgrep.tar.gz \
+      "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz" \
+    && tar -xzf /tmp/ripgrep.tar.gz -C /tmp \
+    && mkdir -p "/usr/local/lib/node_modules/@qingj/deepseekcode/dist/vendor/ripgrep/${RG_ARCH}-linux" \
+    && mv "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" \
+          "/usr/local/lib/node_modules/@qingj/deepseekcode/dist/vendor/ripgrep/${RG_ARCH}-linux/rg" \
+    && chmod +x "/usr/local/lib/node_modules/@qingj/deepseekcode/dist/vendor/ripgrep/${RG_ARCH}-linux/rg" \
+    && ln -s "/usr/local/lib/node_modules/@qingj/deepseekcode/dist/vendor/ripgrep/${RG_ARCH}-linux/rg" /usr/local/bin/rg \
+    && rm -rf /tmp/ripgrep.tar.gz "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}"
+
 # security-guidance plugin (anthropics/claude-plugins-official) — session
 # hooks that flag security issues on edits and review diffs/commits. Pinned
 # to the marketplace commit the DeepSeek Code CLI syncs by default. Shipped

@@ -6,6 +6,7 @@ export/
 *.tar.gz
 *.swp
 .config/
+.claude/
 .deepseek/
 .deepseek-code/
 .npm/

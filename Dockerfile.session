@@ -8,9 +8,12 @@
 #
 # Tools included: Go 1.27, build-base (make + gcc), git, bash, curl, jq,
 # kubectl (v1.37.x, matching client-go v0.37.1), the grype CLI (v0.121.0,
-# matching the embedded library pinned in go.mod) and the DeepSeek Code CLI
-# (@qingj/deepseekcode, exposed as `deepseek`). Everything ships inside the
-# image — the session has no dependencies on the host toolchain.
+# matching the embedded library pinned in go.mod), the DeepSeek Code CLI
+# (@qingj/deepseekcode, exposed as `deepseek`), python3 + pip (needed by the
+# security-guidance plugin hooks) and the security-guidance plugin itself
+# (shipped in /session/plugins, loaded via `--plugin-dir` by
+# `make start-session`). Everything ships inside the image — the session has
+# no dependencies on the host toolchain.
 #
 # Build:  make build-session   (or: docker build --build-arg UID=$(id -u) \
 #                                --build-arg GID=$(id -g) -f Dockerfile.session .)
@@ -23,8 +26,10 @@ ARG GID=1000
 
 # Toolchain: build-base brings make + gcc (the project itself builds with
 # CGO_ENABLED=0, but the compilers are useful for the dev loop); curl is
-# needed by the downloads below; jq helps debugging the API payloads.
-RUN apk add --no-cache git bash ca-certificates tzdata build-base curl jq nodejs npm \
+# needed by the downloads below; jq helps debugging the API payloads;
+# python3 + py3-pip are needed by the security-guidance plugin hooks (its
+# SessionStart hook builds a venv with the agent SDK on first run).
+RUN apk add --no-cache git bash ca-certificates tzdata build-base curl jq nodejs npm python3 py3-pip \
     && addgroup -g ${GID} dev \
     && adduser -D -u ${UID} -G dev -h /workspace dev \
     && mkdir -p /workspace && chown ${UID}:${GID} /workspace
@@ -51,6 +56,19 @@ RUN curl -fsSL \
 ARG DEEPSEEKCODE_VERSION=0.1.1
 RUN npm install -g @qingj/deepseekcode@${DEEPSEEKCODE_VERSION} --no-audit --no-fund \
     && ln -s /usr/local/bin/deepseekcode /usr/local/bin/deepseek
+
+# security-guidance plugin (anthropics/claude-plugins-official) — session
+# hooks that flag security issues on edits and review diffs/commits. Pinned
+# to the marketplace commit the DeepSeek Code CLI syncs by default. Shipped
+# under /session/plugins (NOT $HOME/.deepseek-code: /workspace is shadowed by
+# the repo mount at runtime) and loaded with `--plugin-dir` (see
+# `make start-session`).
+ARG SECURITY_GUIDANCE_PLUGIN_SHA=a7ba5b93db0c7c8d17f3f1d25853adca79598a1a
+RUN curl -fsSL "https://codeload.github.com/anthropics/claude-plugins-official/tar.gz/${SECURITY_GUIDANCE_PLUGIN_SHA}" -o /tmp/plugins.tar.gz \
+    && tar -xzf /tmp/plugins.tar.gz -C /tmp \
+    && mkdir -p /session/plugins \
+    && mv "/tmp/claude-plugins-official-${SECURITY_GUIDANCE_PLUGIN_SHA}/plugins/security-guidance" /session/plugins/ \
+    && rm -rf /tmp/plugins.tar.gz "/tmp/claude-plugins-official-${SECURITY_GUIDANCE_PLUGIN_SHA}"
 
 # The session context travels with the image (the live repo copy is mounted
 # at /workspace by `make start-session`).

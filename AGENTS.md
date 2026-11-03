@@ -89,11 +89,13 @@
   Banco grype cacheado em `/tmp/artifactor-direct-test` (v6.1.10, ~3,2GB,
   morre no reset).
 - Sessões: `make build-session` (container dev, usuário do host — com Go,
-  make/gcc, git, curl, jq, kubectl v1.37, grype CLI v0.121.0 e o CLI
-  DeepSeek Code `@qingj/deepseekcode` instalado dentro da imagem, exposto
-  como `deepseek`) e `make start-session` (sessão DeepSeek Coder com
-  `SESSION.md` como contexto inicial; repo montado em /workspace; sem
-  dependências do host; `DEEPSEEK ?= deepseek`).
+  make/gcc, git, curl, jq, kubectl v1.37, grype CLI v0.121.0, python3 + pip
+  e o CLI DeepSeek Code `@qingj/deepseekcode` instalado dentro da imagem,
+  exposto como `deepseek`, além do plugin security-guidance em
+  /session/plugins) e `make start-session` (sessão DeepSeek Coder com
+  `SESSION.md` como contexto inicial; carrega o plugin security-guidance via
+  `--plugin-dir`; repo montado em /workspace; sem dependências do host;
+  `DEEPSEEK ?= deepseek`).
 
 ## 5. Referência de CLI (scan é o subcomando padrão)
 

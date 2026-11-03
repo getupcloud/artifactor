@@ -115,4 +115,4 @@ start-session: ## Start a DeepSeek Coder session with SESSION.md as the initial 
 		-e DEEPSEEK_API_KEY="$$(op item get DEEPSEEK_API_KEY --vault Employee --format json | jq -r '.fields[]|select(.id=="credential").value')" \
 		-u $$(id -u):$$(id -g) \
 		-v "$$PWD:/workspace" -w /workspace \
-		$(SESSION_IMAGE) $(DEEPSEEK) "Read /workspace/SESSION.md, then /workspace/AGENTS.md, /workspace/docs/adr/ and /workspace/specs/ as the initial session context, then wait for instructions."
+		$(SESSION_IMAGE) $(DEEPSEEK) --plugin-dir /session/plugins/security-guidance "Read /workspace/SESSION.md, then /workspace/AGENTS.md, /workspace/docs/adr/ and /workspace/specs/ as the initial session context, then wait for instructions."

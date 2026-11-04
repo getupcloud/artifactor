@@ -99,6 +99,7 @@ func runScanCmd(args []string) {
 		ignoreDB        = fs.Bool("ignore-grype-db-unavailable", envBool("IGNORE_GRYPE_DB_UNAVAILABLE", false), "keep serving when the grype vulnerability DB is unavailable and cannot be downloaded (scans will fail until it is available; without this flag artifactor exits)")
 		inCluster       = fs.Bool("in-cluster", envBool("IN_CLUSTER", false), "run the scan inside the cluster in a temporary pod with the same parameters (requires --export <dir>); the report is packed as a .tar.gz inside the pod, downloaded via the Kubernetes API and extracted locally")
 		inClusterForce  = fs.Bool("in-cluster-force", envBool("IN_CLUSTER_FORCE", false), "with --in-cluster: overwrite existing scan resources and remove them afterwards without asking")
+		inClusterKeep   = fs.Bool("in-cluster-keep", envBool("IN_CLUSTER_KEEP", false), "with --in-cluster: keep the created scan resources (pod and CA ConfigMap) after the run and print the kubectl command to remove them manually")
 		inClusterImage  = fs.String("in-cluster-image", envStr("IN_CLUSTER_IMAGE", ""), "container image for the in-cluster scan pod (default: the image of the artifactor deployment manifest)")
 		imagePullPolicy = fs.String("image-pull-policy", envStr("IMAGE_PULL_POLICY", "IfNotPresent"), "imagePullPolicy of the in-cluster scan pod (Always, IfNotPresent or Never)")
 		inClusterResources = fs.String("in-cluster-resources", envStr("IN_CLUSTER_RESOURCES", ""), "container resources of the in-cluster scan pod (comma-separated \"(requests|limits).(memory|cpu)=<quantity>\" entries overriding the defaults requests.cpu=100m,requests.memory=256Mi,limits.cpu=2,limits.memory=4Gi)")
@@ -164,6 +165,7 @@ func runScanCmd(args []string) {
 	if *inCluster || *inClusterForce {
 		err := runInClusterScan(ctx, inClusterOpts{
 			Force:           *inClusterForce,
+			Keep:            *inClusterKeep,
 			Image:           *inClusterImage,
 			ImagePullPolicy: *imagePullPolicy,
 			Resources:       resources,

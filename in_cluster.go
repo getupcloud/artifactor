@@ -46,6 +46,7 @@ const (
 // inClusterOpts carries the resolved scan flags into the in-cluster runner.
 type inClusterOpts struct {
 	Force           bool
+	Keep            bool
 	Image           string
 	ImagePullPolicy string
 	Resources       corev1.ResourceRequirements
@@ -219,13 +220,14 @@ func runInClusterScan(ctx context.Context, o inClusterOpts) error {
 	logx.Infof("in-cluster scan pod %s/%s created (image %s); %d flag(s) forwarded", inClusterNamespace, inClusterPodName, image, len(pod.Spec.Containers[0].Args)-1)
 	applied := true
 
-	// Remove the pod + CA ConfigMap at the end (asking first unless forced).
+	// Remove the pod + CA ConfigMap at the end (asking first unless forced;
+	// --in-cluster-keep keeps them and prints the manual removal command).
 	defer func() {
 		if !applied {
 			return
 		}
-		remove := o.Force
-		if !remove {
+		remove := o.Force && !o.Keep
+		if !remove && !o.Keep {
 			remove = askYN("Remove the in-cluster scan resources from the cluster (pod " + inClusterPodName + " and CA ConfigMap)?")
 		}
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -241,7 +243,8 @@ func runInClusterScan(ctx context.Context, o inClusterOpts) error {
 			}
 			logx.Infof("in-cluster scan resources removed")
 		} else {
-			logx.Infof("in-cluster scan resources kept (pod %s/%s)", inClusterNamespace, inClusterPodName)
+			logx.Infof("in-cluster scan resources kept (pod %s/%s); remove them manually with: %s",
+				inClusterNamespace, inClusterPodName, inClusterCleanupCommand(caCM))
 		}
 	}()
 
@@ -249,8 +252,9 @@ func runInClusterScan(ctx context.Context, o inClusterOpts) error {
 	// polls the exec until the tarball appears (it is written atomically).
 	// The same poll loop prints the pod logs (stdout + stderr merged by the
 	// container runtime) to the local stderr as they are produced: regular
-	// short GETs with SinceTime — reliable in any environment, unlike a
-	// long-held follow stream.
+	// short GETs re-read from the beginning of the log, skipping the lines
+	// already shown — reliable in any environment, unlike a long-held follow
+	// stream.
 	lw := &podLogWriter{w: os.Stderr}
 	localTar := strings.TrimRight(o.ExportAll, "/") + ".tar.gz"
 	if dir := filepath.Dir(localTar); dir != "." {
@@ -352,6 +356,17 @@ func objectLabel(obj runtime.Object) string {
 		return strings.ToLower(kind) + " " + meta.GetName()
 	}
 	return fmt.Sprintf("%T", obj)
+}
+
+// inClusterCleanupCommand returns the kubectl command that removes the
+// in-cluster scan resources kept in the cluster (the scan pod and, when a CA
+// was provided, its ConfigMap).
+func inClusterCleanupCommand(caCM *corev1.ConfigMap) string {
+	refs := []string{"pod/" + inClusterPodName}
+	if caCM != nil {
+		refs = append(refs, "configmap/"+caCM.Name)
+	}
+	return "kubectl -n " + inClusterNamespace + " delete " + strings.Join(refs, " ")
 }
 
 // deploymentImage extracts the container image of the embedded deployment
@@ -548,51 +563,60 @@ func scanPodArgs(o inClusterOpts) []string {
 	return args
 }
 
-// podLogWriter forwards a pod log stream to w, tracking how many bytes were
-// forwarded and the timestamp of the last complete line (the pod binary logs
-// through logx, so every line carries a "YYYY/MM/DD HH:MM:SS" timestamp).
-// The timestamp lets a re-attached stream resume instead of repeating the
-// whole log.
+// podLogWriter forwards a pod log stream to w, counting the complete lines
+// forwarded. Only complete lines are forwarded (a trailing partial line is
+// buffered until it is completed); the line count is the resume point: when
+// the tail connection drops and the stream is re-read from the beginning,
+// the first `lines` lines are skipped so the display continues from the last
+// line shown.
 type podLogWriter struct {
-	w        io.Writer
-	bytes    int64
-	rest     []byte
-	lastTime *metav1.Time
+	w     io.Writer
+	bytes int64 // bytes forwarded to w
+	lines int64 // complete lines forwarded to w
+	skip  int64 // complete lines to discard before buffering (resume offset)
+	rest  []byte
+}
+
+// resume marks the next stream as a restart: the lines already forwarded are
+// skipped (the stream is re-read from the beginning) and the buffered partial
+// line is discarded (the restart re-delivers it from its start).
+func (p *podLogWriter) resume() {
+	p.skip = p.lines
+	p.rest = p.rest[:0]
 }
 
 func (p *podLogWriter) Write(b []byte) (int, error) {
-	// forward everything immediately (real-time display)
-	if _, err := p.w.Write(b); err != nil {
-		return 0, err
+	n := len(b)
+	if p.skip > 0 {
+		// discard whole lines already shown by the previous stream
+		for p.skip > 0 {
+			i := bytes.IndexByte(b, '\n')
+			if i < 0 {
+				return n, nil
+			}
+			b = b[i+1:]
+			p.skip--
+		}
 	}
-	p.bytes += int64(len(b))
 	data := append(p.rest, b...)
+	var out []byte
 	for {
 		i := bytes.IndexByte(data, '\n')
 		if i < 0 {
 			break
 		}
-		p.recordLine(data[:i+1])
+		out = append(out, data[:i+1]...)
+		p.lines++
 		data = data[i+1:]
 	}
 	p.rest = append(p.rest[:0], data...)
-	return len(b), nil
-}
-
-// recordLine extracts the logx timestamp of a complete log line, if present.
-func (p *podLogWriter) recordLine(line []byte) {
-	// "artifactor: 2006/01/02 15:04:05 ..." -> timestamp at [12:31)
-	if len(line) >= 31 {
-		if t, err := time.Parse("2006/01/02 15:04:05", string(line[12:31])); err == nil {
-			p.lastTime = &metav1.Time{Time: t}
+	if len(out) > 0 {
+		if _, err := p.w.Write(out); err != nil {
+			return 0, err
 		}
+		p.bytes += int64(len(out))
 	}
-}
-
-// since returns the timestamp to resume the log stream from (nil = from the
-// beginning).
-func (p *podLogWriter) since() *metav1.Time {
-	return p.lastTime
+	return n, nil
 }
 
 // downloadReport polls the scan pod (exec `artifactor cat`) until the report
@@ -648,24 +672,14 @@ func downloadReport(ctx context.Context, kc *k8s.Client, localTar string, lw *po
 	}
 }
 
-// showPodLogs fetches the pod logs produced after the last shown line and
-// prints them through lw (which tracks the last timestamp shown).
+// showPodLogs streams the pod logs into lw, resuming from the last line
+// shown: the stream is re-read from the beginning on every poll and the
+// lines already forwarded are skipped by number, so a dropped connection
+// (or a poll without new lines) never repeats or misses lines.
 func showPodLogs(ctx context.Context, kc *k8s.Client, lw *podLogWriter) {
-	since := lw.since()
-	if since != nil {
-		// second-granular timestamps: start after the last shown second to
-		// avoid repeating lines
-		since = &metav1.Time{Time: since.Add(time.Second)}
-	}
-	logs, err := kc.PodLogs(ctx, inClusterNamespace, inClusterPodName, inClusterContainer, since)
-	if err != nil {
+	lw.resume()
+	if err := kc.PodLogsStream(ctx, inClusterNamespace, inClusterPodName, inClusterContainer, lw); err != nil {
 		logx.Debugf("pod logs poll: %v", err)
-		return
-	}
-	if logs != "" {
-		if _, err := lw.Write([]byte(logs)); err != nil {
-			logx.Debugf("print pod logs: %v", err)
-		}
 	}
 }
 

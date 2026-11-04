@@ -30,5 +30,8 @@ artifactor: [customer/cluster] AAAA/MM/DD HH:MM:SS arquivo:linha: mensagem
 
 - Logs são rastreáveis por arquivo/linha e por cliente/cluster em execuções
   locais, no pod e nos relatórios transmitidos.
-- O parse do timestamp na posição fixa `[12:31]` (prefixo `artifactor: `)
-  é usado pelo polling de logs do `--in-cluster` para o `SinceTime`.
+- O polling de logs do `--in-cluster` não usa o timestamp para retomar: cada
+  poll relê o log do início e pula as linhas já exibidas pelo número da
+  última linha registrada (o resume por `SinceTime` com parse na posição fixa
+  `[12:31]` quebrava com o prefixo `[customer/cluster]` e a conexão caída
+  repetia o log inteiro).

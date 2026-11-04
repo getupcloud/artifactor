@@ -215,19 +215,22 @@ func (c *Client) DeletePod(ctx context.Context, namespace, name string) error {
 	return c.cs.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }
 
-// PodLogs returns the pod container logs (stdout + stderr merged by the
-// container runtime). With a non-nil since, only lines logged at or after
-// that instant are returned.
-func (c *Client) PodLogs(ctx context.Context, namespace, name, container string, since *metav1.Time) (string, error) {
+// PodLogsStream streams the pod container logs (stdout + stderr merged by the
+// container runtime) from the beginning into w. The caller resumes after a
+// dropped connection by skipping the lines already seen.
+func (c *Client) PodLogsStream(ctx context.Context, namespace, name, container string, w io.Writer) error {
 	req := c.cs.CoreV1().Pods(namespace).GetLogs(name, &corev1.PodLogOptions{
 		Container: container,
-		SinceTime: since,
 	})
-	data, err := req.DoRaw(ctx)
+	stream, err := req.Stream(ctx)
 	if err != nil {
-		return "", fmt.Errorf("pod logs: %w", err)
+		return fmt.Errorf("pod logs: %w", err)
 	}
-	return string(data), nil
+	defer stream.Close()
+	if _, err := io.Copy(w, stream); err != nil {
+		return fmt.Errorf("pod logs: %w", err)
+	}
+	return nil
 }
 
 // CopyPodFile downloads a file from the pod by exec'ing the artifactor

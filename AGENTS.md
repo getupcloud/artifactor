@@ -113,11 +113,12 @@
   `--ignore-grype-db-unavailable`.
 - `--customer-name`/`--cluster-name` — exibidos como `[customer/cluster]` em
   todas as linhas de log.
-- In-cluster: `--in-cluster`, `--in-cluster-force`, `--in-cluster-image`,
-  `--openshift`, `--image-pull-policy` (política do pod; no `install`
-  sobrescreve o deployment), `--in-cluster-resources` (entradas
-  `(requests|limits).(memory|cpu)=<quantidade>` que sobrescrevem os defaults
-  requests 100m/256Mi e limits 2/4Gi). Flags ocultas: `--export-tar` (.tar.gz no pod),
+- In-cluster: `--in-cluster`, `--in-cluster-force`, `--in-cluster-keep`
+  (mantém pod/ConfigMap ao sair e imprime o comando kubectl de remoção
+  manual), `--in-cluster-image`, `--openshift`, `--image-pull-policy`
+  (política do pod; no `install` sobrescreve o deployment),
+  `--in-cluster-resources` (entradas `(requests|limits).(memory|cpu)=<quantidade>`
+  que sobrescrevem os defaults requests 100m/256Mi e limits 2/4Gi). Flags ocultas: `--export-tar` (.tar.gz no pod),
   `--hold` (mantém o container vivo); subcomando oculto `cat` (streams um
   arquivo do pod para stdout).
 - `install`: `--dump`, `--dry-run`, `--image`, `--image-pull-policy`,
@@ -152,8 +153,11 @@
   oculto, sai com SIGTERM) até o CLI baixar via exec do `artifactor cat`
   oculto (remotecommand).
 - Logs do pod (stdout+stderr fundidos pelo runtime) são exibidos localmente
-  por POLLING a cada 2s (`PodLogs` GET com `SinceTime = última linha + 1s`) —
-  o ambiente NÃO entrega streams follow de longa duração; exec funciona.
+  por POLLING a cada 2s: cada poll relê o log do início e pula as linhas já
+  exibidas pelo **número da última linha registrada** (o resume por
+  `SinceTime` era frágil — o parse do timestamp quebrava com o prefixo
+  `[customer/cluster]` e a conexão caída repetia o log inteiro) — o ambiente
+  NÃO entrega streams follow de longa duração; exec funciona.
 - Pod/ConfigMap existentes são sobrescritos e removidos só após perguntar;
   `--in-cluster-force` pula os prompts; `--openshift` aplica o SCC +
   ClusterRole/ClusterRoleBinding `artifactor-scc` (o SCC não está no scheme

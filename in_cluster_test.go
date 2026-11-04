@@ -96,7 +96,7 @@ func TestScanPodArgs(t *testing.T) {
 		}
 	}
 	// local-only paths must not leak into the pod
-	for _, forbidden := range []string{"/local/ca.pem", "--in-cluster", "--port", "--open", "--openshift"} {
+	for _, forbidden := range []string{"/local/ca.pem", "--in-cluster", "--in-cluster-keep", "--port", "--open", "--openshift"} {
 		if strings.Contains(joined, forbidden) {
 			t.Errorf("args must not contain %q:\n%s", forbidden, joined)
 		}
@@ -123,6 +123,16 @@ func TestScanPodArgsMinimal(t *testing.T) {
 		if strings.Contains(joined, forbidden) {
 			t.Errorf("args must not contain %q:\n%s", forbidden, joined)
 		}
+	}
+}
+
+func TestInClusterCleanupCommand(t *testing.T) {
+	if got, want := inClusterCleanupCommand(nil), "kubectl -n artifactor delete pod/artifactor-scan"; got != want {
+		t.Errorf("cleanup command (no CA) = %q, want %q", got, want)
+	}
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "artifactor-db-ca"}}
+	if got, want := inClusterCleanupCommand(cm), "kubectl -n artifactor delete pod/artifactor-scan configmap/artifactor-db-ca"; got != want {
+		t.Errorf("cleanup command (with CA) = %q, want %q", got, want)
 	}
 }
 
@@ -350,16 +360,12 @@ func TestPodLogWriter(t *testing.T) {
 	var buf bytes.Buffer
 	lw := &podLogWriter{w: &buf}
 
-	if lw.since() != nil {
-		t.Fatal("initial since should be nil")
-	}
-
-	// feed the stream in chunks that split lines mid-way
+	// feed the stream in chunks that split lines mid-way; only complete lines
+	// are forwarded (the partial tail is buffered)
 	chunks := []string{
 		"artifactor: 2026/10/31 19:40:07 internal/scanner/scanner.",
 		"go:582: scanning 1 SBOM file(s) ...\n",
 		"some continuation line\n",
-		"artifactor: 2026/10/31 19:40:13 internal/scanner/scanner.go:597: scanning /tmp/sbom.json ...\n",
 		"tail without newline",
 	}
 	for _, c := range chunks {
@@ -367,27 +373,95 @@ func TestPodLogWriter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-
-	if got := buf.String(); got != strings.Join(chunks, "") {
-		t.Fatalf("passthrough mismatch:\n%q", got)
+	want := "artifactor: 2026/10/31 19:40:07 internal/scanner/scanner.go:582: scanning 1 SBOM file(s) ...\nsome continuation line\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("forwarded:\n%q\nwant:\n%q", got, want)
 	}
-	if lw.bytes != int64(len(strings.Join(chunks, ""))) {
-		t.Fatalf("bytes = %d", lw.bytes)
+	if lw.bytes != int64(len(want)) {
+		t.Fatalf("bytes = %d, want %d", lw.bytes, len(want))
 	}
-	since := lw.since()
-	if since == nil {
-		t.Fatal("lastTime not recorded")
-	}
-	if want := "2026/10/31 19:40:13"; since.Format("2006/01/02 15:04:05") != want {
-		t.Fatalf("since = %v, want %s", since, want)
+	if lw.lines != 2 {
+		t.Fatalf("lines = %d, want 2", lw.lines)
 	}
 
-	// a line without the logx timestamp must not overwrite lastTime
-	if _, err := lw.Write([]byte("no timestamp here\n")); err != nil {
+	// the buffered partial line is forwarded once completed
+	if _, err := lw.Write([]byte(" done\n")); err != nil {
 		t.Fatal(err)
 	}
-	if lw.since().Format("2006/01/02 15:04:05") != "2026/10/31 19:40:13" {
-		t.Fatal("lastTime overwritten by a line without timestamp")
+	want += "tail without newline done\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("forwarded:\n%q\nwant:\n%q", got, want)
+	}
+	if lw.lines != 3 {
+		t.Fatalf("lines = %d, want 3", lw.lines)
+	}
+}
+
+func TestPodLogWriterResume(t *testing.T) {
+	var buf bytes.Buffer
+	lw := &podLogWriter{w: &buf}
+
+	if _, err := lw.Write([]byte("line1\nline2\nline3\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	// the tail connection dropped: the stream restarts from the beginning of
+	// the log and arrives in chunks that split lines mid-way; the lines
+	// already shown are skipped by number
+	lw.resume()
+	if _, err := lw.Write([]byte("line1\nli")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lw.Write([]byte("ne2\nline3\nline4\n")); err != nil {
+		t.Fatal(err)
+	}
+	want := "line1\nline2\nline3\nline4\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("forwarded %q, want %q", got, want)
+	}
+	if lw.lines != 4 {
+		t.Fatalf("lines = %d, want 4", lw.lines)
+	}
+
+	// a poll without new lines must not repeat anything
+	lw.resume()
+	if _, err := lw.Write([]byte("line1\nline2\nline3\nline4\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != want {
+		t.Fatalf("forwarded %q, want %q", got, want)
+	}
+	if lw.lines != 4 {
+		t.Fatalf("lines = %d, want 4", lw.lines)
+	}
+}
+
+func TestPodLogWriterResumePartialLine(t *testing.T) {
+	var buf bytes.Buffer
+	lw := &podLogWriter{w: &buf}
+
+	// the first stream ends mid-line (nothing of that line is displayed yet)
+	if _, err := lw.Write([]byte("a\nb\npart")); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "a\nb\n" {
+		t.Fatalf("forwarded %q, want %q", got, "a\nb\n")
+	}
+	if lw.lines != 2 {
+		t.Fatalf("lines = %d, want 2", lw.lines)
+	}
+
+	// restart: the partial line is re-delivered from its start and completed
+	lw.resume()
+	if _, err := lw.Write([]byte("a\nb\npartial line\nc\n")); err != nil {
+		t.Fatal(err)
+	}
+	want := "a\nb\npartial line\nc\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("forwarded %q, want %q", got, want)
+	}
+	if lw.lines != 4 {
+		t.Fatalf("lines = %d, want 4", lw.lines)
 	}
 }
 

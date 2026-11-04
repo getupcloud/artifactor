@@ -25,12 +25,15 @@ relatório de volta — usando a client lib do Kubernetes (não kubectl).
 - o CLI baixa o `.tar.gz` por exec do subcomando oculto `artifactor cat`
   (remotecommand), em polling de 2s, e extrai no `--export` local
   (`<dir>.tar.gz` mantido); `--open` funciona no relatório baixado;
-- logs do pod exibidos localmente por **polling** (`PodLogs` GET com
-  `SinceTime`), pois streams follow de longa duração não funcionam de forma
+- logs do pod exibidos localmente por **polling** (cada poll relê o log do
+  início e pula as linhas já exibidas pelo número da última linha
+  registrada), pois streams follow de longa duração não funcionam de forma
   confiável no ambiente;
 - recursos existentes são sobrescritos/removidos só após perguntar;
-  `--in-cluster-force` pula os prompts; `--openshift` aplica o SCC + RBAC
-  (SCC via dynamic client, não está no scheme do client-go);
+  `--in-cluster-force` pula os prompts; `--in-cluster-keep` mantém o pod e o
+  ConfigMap ao sair e imprime o comando `kubectl` de remoção manual;
+  `--openshift` aplica o SCC + RBAC (SCC via dynamic client, não está no
+  scheme do client-go);
   `--image-pull-policy` define a política do pod; `--in-cluster-image`
   sobrescreve a imagem (precisa conter `--hold`/`--export-tar`/`cat`).
 

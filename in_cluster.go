@@ -656,9 +656,9 @@ func downloadReport(ctx context.Context, kc *k8s.Client, localTar string, lw *po
 		}
 		switch pod.Status.Phase {
 		case corev1.PodFailed:
-			return fmt.Errorf("scan pod failed")
+			return fmt.Errorf("scan pod failed: %s", podFailureReason(pod))
 		case corev1.PodSucceeded:
-			return fmt.Errorf("scan pod finished before the report could be downloaded (pod image without --hold support?)")
+			return fmt.Errorf("scan pod finished before the report could be downloaded (%s; pod image without --hold support?)", podFailureReason(pod))
 		}
 		if waiting {
 			logx.Infof("waiting for the report to be ready inside the pod ...")
@@ -670,6 +670,40 @@ func downloadReport(ctx context.Context, kc *k8s.Client, localTar string, lw *po
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+// podFailureReason describes why the scan pod failed, based on its
+// termination status: the Terminated state of the scan container (reason,
+// exit code, signal and message) or, when the container has no termination
+// status (e.g. the pod was evicted), the pod-level reason/message.
+func podFailureReason(pod *corev1.Pod) string {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name != inClusterContainer {
+			continue
+		}
+		t := cs.State.Terminated
+		if t == nil {
+			break
+		}
+		reason := t.Reason
+		if reason == "" {
+			reason = "exit code " + strconv.Itoa(int(t.ExitCode))
+		} else if t.ExitCode != 0 {
+			reason += " (exit code " + strconv.Itoa(int(t.ExitCode)) + ")"
+		}
+		if t.Message != "" {
+			reason += ": " + t.Message
+		}
+		return "container " + cs.Name + " terminated: " + reason
+	}
+	reason := pod.Status.Reason
+	if reason == "" {
+		reason = string(pod.Status.Phase)
+	}
+	if pod.Status.Message != "" {
+		reason += ": " + pod.Status.Message
+	}
+	return "pod status: " + reason
 }
 
 // showPodLogs streams the pod logs into lw, resuming from the last line

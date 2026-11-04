@@ -136,6 +136,67 @@ func TestInClusterCleanupCommand(t *testing.T) {
 	}
 }
 
+func TestPodFailureReason(t *testing.T) {
+	mkPod := func(cs []corev1.ContainerStatus, reason, message string, phase corev1.PodPhase) *corev1.Pod {
+		return &corev1.Pod{
+			Status: corev1.PodStatus{
+				Phase:             phase,
+				Reason:            reason,
+				Message:           message,
+				ContainerStatuses: cs,
+			},
+		}
+	}
+	scanTerminated := func(reason, message string, exit int32) []corev1.ContainerStatus {
+		return []corev1.ContainerStatus{{
+			Name: inClusterContainer,
+			State: corev1.ContainerState{
+				Terminated: &corev1.ContainerStateTerminated{Reason: reason, Message: message, ExitCode: exit},
+			},
+		}}
+	}
+
+	for name, tc := range map[string]struct {
+		pod  *corev1.Pod
+		want string
+	}{
+		"OOMKilled": {
+			mkPod(scanTerminated("OOMKilled", "", 137), "", "", corev1.PodFailed),
+			"container scan terminated: OOMKilled (exit code 137)",
+		},
+		"error with message": {
+			mkPod(scanTerminated("Error", "exec failed", 1), "", "", corev1.PodFailed),
+			"container scan terminated: Error (exit code 1): exec failed",
+		},
+		"completed": {
+			mkPod(scanTerminated("Completed", "", 0), "", "", corev1.PodSucceeded),
+			"container scan terminated: Completed",
+		},
+		"no reason": {
+			mkPod(scanTerminated("", "", 2), "", "", corev1.PodFailed),
+			"container scan terminated: exit code 2",
+		},
+		"evicted without container status": {
+			mkPod(nil, "Evicted", "The node was low on resource: memory.", corev1.PodFailed),
+			"pod status: Evicted: The node was low on resource: memory.",
+		},
+		"failed without any status": {
+			mkPod(nil, "", "", corev1.PodFailed),
+			"pod status: Failed",
+		},
+		"terminated but not the scan container": {
+			mkPod([]corev1.ContainerStatus{{Name: "other", State: corev1.ContainerState{
+				Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 9},
+			}}}, "", "", corev1.PodFailed),
+			"pod status: Failed",
+		},
+	} {
+		if got := podFailureReason(tc.pod); got != tc.want {
+			t.Errorf("%s: podFailureReason = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
 func TestBuildScanPodImagePullPolicy(t *testing.T) {
 	for policy, want := range map[string]string{
 		"":             "IfNotPresent", // default

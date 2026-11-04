@@ -115,7 +115,9 @@
   todas as linhas de log.
 - In-cluster: `--in-cluster`, `--in-cluster-force`, `--in-cluster-image`,
   `--openshift`, `--image-pull-policy` (política do pod; no `install`
-  sobrescreve o deployment). Flags ocultas: `--export-tar` (.tar.gz no pod),
+  sobrescreve o deployment), `--in-cluster-resources` (entradas
+  `(requests|limits).(memory|cpu)=<quantidade>` que sobrescrevem os defaults
+  requests 100m/256Mi e limits 2/4Gi). Flags ocultas: `--export-tar` (.tar.gz no pod),
   `--hold` (mantém o container vivo); subcomando oculto `cat` (streams um
   arquivo do pod para stdout).
 - `install`: `--dump`, `--dry-run`, `--image`, `--image-pull-policy`,

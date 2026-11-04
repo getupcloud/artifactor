@@ -48,6 +48,7 @@ type inClusterOpts struct {
 	Force           bool
 	Image           string
 	ImagePullPolicy string
+	Resources       corev1.ResourceRequirements
 	Namespaces      []string
 	Concurrency     int
 	DBAutoUpdate    bool
@@ -390,16 +391,7 @@ func buildScanPod(image string, o inClusterOpts, withCA bool) *corev1.Pod {
 			AllowPrivilegeEscalation: boolPtr(false),
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("100m"),
-				corev1.ResourceMemory: resource.MustParse("256Mi"),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("2"),
-				corev1.ResourceMemory: resource.MustParse("4Gi"),
-			},
-		},
+		Resources: podResources(o.Resources),
 	}
 	volumes := []corev1.Volume{
 		{Name: "data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -439,6 +431,80 @@ func buildScanPod(image string, o inClusterOpts, withCA bool) *corev1.Pod {
 			Volumes:          volumes,
 		},
 	}
+}
+
+// podResources returns the container resources of the scan pod: the current
+// defaults overridden by the --in-cluster-resources entries (the same values
+// as the artifactor deployment manifest).
+func podResources(overrides corev1.ResourceRequirements) corev1.ResourceRequirements {
+	resources := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("100m"),
+			corev1.ResourceMemory: resource.MustParse("256Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("2"),
+			corev1.ResourceMemory: resource.MustParse("4Gi"),
+		},
+	}
+	for name, quantity := range overrides.Requests {
+		resources.Requests[name] = quantity
+	}
+	for name, quantity := range overrides.Limits {
+		resources.Limits[name] = quantity
+	}
+	return resources
+}
+
+// parsePodResources parses a --in-cluster-resources value: a comma-separated
+// list of "(requests|limits).(memory|cpu)=<quantity>" entries, e.g.
+// "requests.memory=1Gi,limits.cpu=4". An empty string returns empty
+// requirements (the pod uses the defaults). Keys may not repeat.
+func parsePodResources(s string) (corev1.ResourceRequirements, error) {
+	rr := corev1.ResourceRequirements{}
+	if s == "" {
+		return rr, nil
+	}
+	for _, entry := range strings.Split(s, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			return rr, fmt.Errorf("invalid entry %q (want (requests|limits).(memory|cpu)=<quantity>)", entry)
+		}
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			return rr, fmt.Errorf("invalid entry %q (want (requests|limits).(memory|cpu)=<quantity>)", entry)
+		}
+		var list *corev1.ResourceList
+		switch key {
+		case "requests.cpu", "requests.memory":
+			if rr.Requests == nil {
+				rr.Requests = corev1.ResourceList{}
+			}
+			list = &rr.Requests
+		case "limits.cpu", "limits.memory":
+			if rr.Limits == nil {
+				rr.Limits = corev1.ResourceList{}
+			}
+			list = &rr.Limits
+		default:
+			return rr, fmt.Errorf("invalid key %q (want requests.cpu, requests.memory, limits.cpu or limits.memory)", key)
+		}
+		var name corev1.ResourceName
+		if strings.HasSuffix(key, "cpu") {
+			name = corev1.ResourceCPU
+		} else {
+			name = corev1.ResourceMemory
+		}
+		if _, dup := (*list)[name]; dup {
+			return rr, fmt.Errorf("duplicate key %q", key)
+		}
+		quantity, err := resource.ParseQuantity(strings.TrimSpace(value))
+		if err != nil {
+			return rr, fmt.Errorf("invalid quantity for %q: %w", key, err)
+		}
+		(*list)[name] = quantity
+	}
+	return rr, nil
 }
 
 // scanPodArgs builds the `artifactor scan` arguments for the pod container

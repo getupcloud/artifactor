@@ -113,6 +113,7 @@ Dockerfile / Makefile       build da imagem e automação
 | `--in-cluster-force` | `IN_CLUSTER_FORCE` | `false` | com `--in-cluster`: sobrescreve recursos existentes e remove tudo no fim **sem perguntar** |
 | `--in-cluster-image` | `IN_CLUSTER_IMAGE` | imagem do deployment | imagem do pod de scan (a imagem precisa conter o `artifactor` com suporte a `--export-tar` e ao subcomando interno `cat`) |
 | `--image-pull-policy` | `IMAGE_PULL_POLICY` | `IfNotPresent` | `imagePullPolicy` do pod do `--in-cluster` (`Always`, `IfNotPresent` ou `Never`) |
+| `--in-cluster-resources` | `IN_CLUSTER_RESOURCES` | `requests.cpu=100m,requests.memory=256Mi,limits.cpu=2,limits.memory=4Gi` | recursos (requests/limits de CPU/memória) do contêiner do pod do `--in-cluster`, como entradas `(requests\|limits).(memory\|cpu)=<quantidade>` separadas por vírgula (as entradas sobrescrevem os defaults) |
 | `--openshift` | `OPENSHIFT` | `false` | com `--in-cluster`: aplica os manifests OpenShift/OKD (`SecurityContextConstraints` + RBAC) que permitem o pod de scan rodar (requer cluster-admin) |
 | `--platform` | `PLATFORM` | `linux/<GOARCH>` | plataforma da imagem a escanear |
 | `--scan-timeout` | `SCAN_TIMEOUT` | `15m` | timeout por imagem |

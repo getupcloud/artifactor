@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -148,6 +149,98 @@ func TestParseImagePullPolicy(t *testing.T) {
 	for _, bad := range []string{"", "always", "Sometimes", "IfNotPresent "} {
 		if _, err := parseImagePullPolicy(bad); err == nil {
 			t.Errorf("parseImagePullPolicy(%q): expected error", bad)
+		}
+	}
+}
+
+func TestBuildScanPodResources(t *testing.T) {
+	// no flag: the current defaults (same values as the deployment manifest)
+	pod := buildScanPod("img:1", inClusterOpts{}, false)
+	c := pod.Spec.Containers[0]
+	if q := c.Resources.Requests[corev1.ResourceCPU]; q.String() != "100m" {
+		t.Errorf("default requests.cpu = %q, want 100m", q.String())
+	}
+	if q := c.Resources.Requests[corev1.ResourceMemory]; q.String() != "256Mi" {
+		t.Errorf("default requests.memory = %q, want 256Mi", q.String())
+	}
+	if q := c.Resources.Limits[corev1.ResourceCPU]; q.String() != "2" {
+		t.Errorf("default limits.cpu = %q, want 2", q.String())
+	}
+	if q := c.Resources.Limits[corev1.ResourceMemory]; q.String() != "4Gi" {
+		t.Errorf("default limits.memory = %q, want 4Gi", q.String())
+	}
+
+	// entries override the defaults; unspecified entries keep the defaults
+	rr, err := parsePodResources("requests.cpu=500m,limits.memory=2Gi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod = buildScanPod("img:1", inClusterOpts{Resources: rr}, false)
+	c = pod.Spec.Containers[0]
+	if q := c.Resources.Requests[corev1.ResourceCPU]; q.String() != "500m" {
+		t.Errorf("requests.cpu = %q, want 500m", q.String())
+	}
+	if q := c.Resources.Requests[corev1.ResourceMemory]; q.String() != "256Mi" {
+		t.Errorf("requests.memory = %q, want 256Mi (default kept)", q.String())
+	}
+	if q := c.Resources.Limits[corev1.ResourceMemory]; q.String() != "2Gi" {
+		t.Errorf("limits.memory = %q, want 2Gi", q.String())
+	}
+	if q := c.Resources.Limits[corev1.ResourceCPU]; q.String() != "2" {
+		t.Errorf("limits.cpu = %q, want 2 (default kept)", q.String())
+	}
+}
+
+func TestParsePodResources(t *testing.T) {
+	rr, err := parsePodResources("requests.cpu=250m,requests.memory=512Mi,limits.cpu=4,limits.memory=8Gi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[corev1.ResourceName]string{
+		corev1.ResourceCPU:    "250m",
+		corev1.ResourceMemory: "512Mi",
+	} {
+		q := rr.Requests[name]
+		if q.String() != want {
+			t.Errorf("requests[%s] = %q, want %q", name, q.String(), want)
+		}
+	}
+	for name, want := range map[corev1.ResourceName]string{
+		corev1.ResourceCPU:    "4",
+		corev1.ResourceMemory: "8Gi",
+	} {
+		q := rr.Limits[name]
+		if q.String() != want {
+			t.Errorf("limits[%s] = %q, want %q", name, q.String(), want)
+		}
+	}
+
+	// empty = no entries (the pod defaults apply)
+	if rr, err := parsePodResources(""); err != nil || len(rr.Requests) != 0 || len(rr.Limits) != 0 {
+		t.Errorf("parsePodResources(\"\") = %v, %v; want empty requirements", rr, err)
+	}
+
+	// partial list is fine
+	rr, err = parsePodResources("limits.cpu=8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rr.Requests) != 0 || len(rr.Limits) != 1 {
+		t.Errorf("partial list parsed as %v", rr)
+	}
+
+	for _, bad := range []string{
+		"requests",
+		"requests.cpu",
+		"requests.cpu=",
+		"foo.bar=1",
+		"requests.cpu=abc",
+		"requests.cpu=100m,requests.cpu=1",
+		",",
+		"limits.memory=1Gi,",
+	} {
+		if _, err := parsePodResources(bad); err == nil {
+			t.Errorf("parsePodResources(%q): expected error", bad)
 		}
 	}
 }

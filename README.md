@@ -13,7 +13,7 @@ O resultado é apresentado em uma **SPA** (Single-Page Application) que permite 
 Baixe o ultimo binário em [release](https://github.com/getupcloud/artifactor/releases) e execute o scan:
 
 ```
-$ tar xzvf artifactor_0.0.1_linux_arm64.tar.gz artifactor
+$ tar xzvf artifactor_0.4.5_linux_arm64.tar.gz artifactor
 
 ## Para rodar localmente (seu host precisa acessar os repositorios de imagens)
 $ ./artifactor scan --export my-cluster

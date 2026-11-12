@@ -13,6 +13,7 @@ O resultado é apresentado em uma **SPA** (Single-Page Application) que permite 
 Baixe o ultimo binário em [release](https://github.com/getupcloud/artifactor/releases) e execute o scan:
 
 ```
+$ wget https://github.com/getupcloud/artifactor/releases/download/v0.4.5/artifactor_0.4.5_linux_amd64.tar.gz
 $ tar xzvf artifactor_0.4.5_linux_arm64.tar.gz artifactor
 
 ## Para rodar localmente (seu host precisa acessar os repositorios de imagens)

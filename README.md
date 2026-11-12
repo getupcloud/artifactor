@@ -14,7 +14,14 @@ Baixe o ultimo binário em [release](https://github.com/getupcloud/artifactor/re
 
 ```
 $ tar xzvf artifactor_0.0.1_linux_arm64.tar.gz artifactor
-$ ./artifactor --export my-cluster
+
+## Para rodar localmente (seu host precisa acessar os repositorios de imagens)
+$ ./artifactor scan --export my-cluster
+
+## Para rodar em um POD no cluster - o relatório é transferido para seu host local
+$ ./artifactor scan --export my-cluster --in-cluster
+
+## Abr o relatório local
 $ xdg-open my-cluster/scan.html
 ```
 

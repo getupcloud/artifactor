@@ -14,7 +14,7 @@ Baixe o ultimo binário em [release](https://github.com/getupcloud/artifactor/re
 
 ```
 $ wget https://github.com/getupcloud/artifactor/releases/download/v0.4.5/artifactor_0.4.5_linux_amd64.tar.gz
-$ tar xzvf artifactor_0.4.5_linux_arm64.tar.gz artifactor
+$ tar xzvf artifactor_0.4.5_linux_amd64.tar.gz artifactor
 
 ## Para rodar localmente (seu host precisa acessar os repositorios de imagens)
 $ ./artifactor scan --export my-cluster

@@ -1,6 +1,6 @@
 # Build, package and deploy the artifactor.
 
-VERSION    ?= 
+VERSION    ?= 0.4.6
 IMAGE_NAME ?= ghcr.io/getupcloud/artifactor
 IMAGE      ?= $(IMAGE_NAME):$(VERSION)
 REGISTRY   ?=
@@ -29,6 +29,7 @@ else
 FULL_IMAGE := $(IMAGE)
 endif
 
+SHELL := /bin/bash
 .ONESHELL:
 .PHONY: help build test vet fmt run export bump docker-build docker-push deploy undeploy port-forward logs tidy clean build-session start-session
 
@@ -65,7 +66,7 @@ bump: gitleaks ## Bump VERSION (Makefile) and the image tag (deploy/deployment.y
 	sed -i -E 's|(image:[[:space:]]*$(IMAGE_NAME):)[^ #]+|\1'"$$NEXT_VERSION"'|' deploy/deployment.yaml
 	git commit -m "Bump version $$NEXT_VERSION" Makefile deploy/deployment.yaml
 
-release:
+release: ## Execute github release workflow
 	@read -p 'gh workflow run release ? [Y/n]: ' res
 	[ "$${res,,}" == y -o "$${res}" == '' ] && gh workflow run release || true
 

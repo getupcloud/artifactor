@@ -68,6 +68,7 @@ bump: gitleaks ## Bump VERSION (Makefile) and the image tag (deploy/deployment.y
 
 release: ## Execute github release workflow
 	@read -p 'gh workflow run release ? [Y/n]: ' res
+	[ -e ~/.config/op/plugins.sh ] && source ~/.config/op/plugins.sh
 	[ "$${res,,}" == y -o "$${res}" == '' ] && gh workflow run release || true
 
 gitleaks: ## Avoid secrets to leak

@@ -5,6 +5,7 @@ scan.html
 export/
 *.tar.gz
 *.swp
+.cache/
 .config/
 .claude/
 .deepseek/

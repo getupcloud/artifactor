@@ -29,6 +29,7 @@ import (
 	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/logx"
 	"github.com/getupcloud/artifactor/internal/scanner"
+	"github.com/getupcloud/artifactor/internal/selfupdate"
 )
 
 var version = "dev"
@@ -122,6 +123,7 @@ func runScanCmd(args []string) {
 		customerName    = fs.String("customer-name", os.Getenv("CUSTOMER_NAME"), "customer name shown in the execution logs and report title")
 		clusterName     = fs.String("cluster-name", os.Getenv("CLUSTER_NAME"), "cluster name shown in the execution logs and report title")
 		logLevel        = fs.String("log-level", envStr("LOG_LEVEL", "info"), "log verbosity: debug, info, warn or err")
+		noCheckUpdate   = fs.Bool("no-check-update-version", envBool("NO_CHECK_UPDATE_VERSION", false), "skip the startup check for a newer artifactor release on GitHub")
 		showVersion     = fs.Bool("version", false, "print version and exit")
 	)
 	fs.Usage = func() {
@@ -161,6 +163,8 @@ func runScanCmd(args []string) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	checkForUpdate(ctx, *noCheckUpdate, *hold, *insecure)
 
 	if *inCluster || *inClusterForce {
 		err := runInClusterScan(ctx, inClusterOpts{
@@ -614,6 +618,65 @@ func openFile(command, file string) error {
 func fatalf(format string, args ...any) {
 	logx.Errorf(format, args...)
 	os.Exit(1)
+}
+
+// checkForUpdate verifies at startup whether a newer artifactor release
+// exists on GitHub and, when the user confirms, replaces the running binary
+// with the release asset. It is skipped when disabled by
+// --no-check-update-version, when running inside a pod (the installed
+// deployment or the in-cluster scan pod, signaled by KUBERNETES_SERVICE_HOST
+// or the internal --hold flag) and on non-semver builds ("dev"). Failures
+// never block the program: they are logged and the scan proceeds.
+func checkForUpdate(ctx context.Context, disabled, hold, insecure bool) {
+	if disabled {
+		return
+	}
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" || hold {
+		return // running inside a pod: updates are handled by the deploy, not in place
+	}
+	rel, err := selfupdate.LatestRelease(ctx, insecure)
+	if err != nil {
+		logx.Debugf("update check: %v", err)
+		return
+	}
+	newer, err := selfupdate.IsNewer(version, rel.Version)
+	if err != nil {
+		logx.Debugf("update check skipped: %v", err)
+		return
+	}
+	if !newer {
+		logx.Debugf("already running the latest artifactor version (%s)", version)
+		return
+	}
+	if !isTerminal(os.Stdin) {
+		logx.Warnf("a newer artifactor version is available: %s (run interactively to update)", rel.Version)
+		return
+	}
+	logx.Infof("new artifactor version available: %s (running %s)", rel.Version, version)
+	if !askYN("update now?") {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		logx.Warnf("update failed: %v", err)
+		return
+	}
+	logx.Infof("downloading artifactor %s (%s) ...", rel.Version, rel.AssetName)
+	if err := rel.Apply(ctx, exe, insecure); err != nil {
+		logx.Warnf("update failed: %v", err)
+		return
+	}
+	logx.Infof("artifactor updated to %s; restart the command to use the new version", rel.Version)
+}
+
+// isTerminal reports whether f is a character device (i.e. an interactive
+// terminal), where yes/no prompts make sense.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 // setLogPrefix configures the std logger prefix used by every log line:

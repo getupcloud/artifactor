@@ -31,6 +31,9 @@
   `grypedb.go` (curator/provider do DB), `grypedbdirect.go` (download
   direto), `scanstats.go` (stats incl. taxas de erro por registry),
   `grypelog.go` (roteia logs do grype pelo logx).
+- `internal/selfupdate/` — check do último release do GitHub no início do
+  scan e substituição do binário local (download do asset tar.gz, extração
+  do binário, rename atômico, fallback `sudo install`).
 - `internal/k8s/` — wrapper do client (discovery, pull secrets, cadeia de
   owners), `podops.go` (apply/delete de objetos, helpers de pod, exec).
 - `internal/api/` — servidor HTTP, endpoints JSON, exports HTML/CSV/SBOM.
@@ -126,6 +129,12 @@
   `--openshift` (SCC+RBAC), `--db-ca-cert` (ConfigMap + mount),
   `--image-token-env[=VAR]` (imagePullSecret do ghcr.io a partir de GH_TOKEN
   ou GITHUB_TOKEN).
+- Atualização: no início do `scan` (fora do pod), verifica o último release
+  do GitHub e pergunta se quer substituir o binário local pelo novo (baixa o
+  asset `artifactor_<os>_<arch>.tar.gz` do release, extrai o binário e usa
+  `sudo install` quando o diretório não é gravável); `--no-check-update-version`
+  (env `NO_CHECK_UPDATE_VERSION`) pula o check; nunca bloqueia o scan (falha
+  de rede vira aviso).
 - `--help`/`-h`/`help` na raiz lista os subcomandos.
 
 ## 6. Banco de vulnerabilidades do grype — conhecimento crítico
@@ -198,7 +207,9 @@
 - CI: workflow docker-build a cada push no main (tags :main, :<sha>, :latest
   — IS_LATEST="true"); workflow release manual (lê VERSION, falha se a tag
   existir, publica :latest só para a versão mais nova); auth no ghcr.io
-  prefere o secret GHCR_PAT, fallback GITHUB_TOKEN.
+  prefere o secret GHCR_PAT, fallback GITHUB_TOKEN. Os releases publicam
+  também os archives `artifactor_<os>_<arch>.tar.gz` (seção `archives` do
+  goreleaser) — são o que o self-update do CLI baixa.
 
 ## 10. Restrições e pegadinhas
 
@@ -221,4 +232,5 @@
 - Persistência de resultados (disco/DB) em vez de só memória.
 - (Concluído recentemente: --in-cluster, taxas de erro por registry, prefixo
   [customer/cluster], --openshift, --image-pull-policy, download direto do
-  DB, política fail-fast do DB, formato de log com arquivo:linha.)
+  DB, política fail-fast do DB, formato de log com arquivo:linha, check de
+  atualização de versão no início do scan.)

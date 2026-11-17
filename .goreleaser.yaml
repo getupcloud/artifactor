@@ -28,6 +28,17 @@ builds:
 snapshot:
   version_template: "main"
 
+# Release archives are what the CLI self-update downloads: one tarball per
+# platform containing only the artifactor binary (internal/selfupdate picks
+# artifactor_<goos>_<goarch>.tar.gz from the latest GitHub release).
+archives:
+  - id: artifactor
+    ids:
+      - artifactor
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
 dockers_v2:
   - id: artifactor
     ids:

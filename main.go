@@ -629,11 +629,13 @@ func fatalf(format string, args ...any) {
 // never block the program: they are logged and the scan proceeds.
 func checkForUpdate(ctx context.Context, disabled, hold, insecure bool) {
 	if disabled {
+		logx.Infof("update check skipped (--no-check-update-version)")
 		return
 	}
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" || hold {
 		return // running inside a pod: updates are handled by the deploy, not in place
 	}
+	logx.Infof("checking for a newer artifactor version ...")
 	rel, err := selfupdate.LatestRelease(ctx, insecure)
 	if err != nil {
 		logx.Debugf("update check: %v", err)

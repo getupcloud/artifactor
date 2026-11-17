@@ -136,6 +136,9 @@ func runInClusterScan(ctx context.Context, o inClusterOpts) error {
 		if image == "" {
 			return fmt.Errorf("no image found in the deployment manifest; set --in-cluster-image")
 		}
+		if !strings.Contains(image, ":") || strings.HasSuffix(image, ":") {
+			return fmt.Errorf("the image in the deployment manifest (%q) has no tag; set --in-cluster-image", image)
+		}
 	}
 
 	pod := buildScanPod(image, o, caCM != nil)

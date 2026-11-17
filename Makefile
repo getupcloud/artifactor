@@ -63,7 +63,7 @@ bump: gitleaks ## Bump VERSION (Makefile) and the image tag (deploy/deployment.y
 		exit 1
 	fi
 	sed -i -E 's|^(VERSION[[:space:]]*\?=[[:space:]]*).*|\1'"$$NEXT_VERSION"'|' Makefile
-	sed -i -E 's|(image:[[:space:]]*$(IMAGE_NAME):)[^ #]+|\1'"$$NEXT_VERSION"'|' deploy/deployment.yaml
+	sed -i -E 's|(image:[[:space:]]*$(IMAGE_NAME):)[^ #]*|\1'"$$NEXT_VERSION"'|' deploy/deployment.yaml
 	git commit -m "Bump version $$NEXT_VERSION" Makefile deploy/deployment.yaml
 
 release: ## Execute github release workflow

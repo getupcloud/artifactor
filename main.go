@@ -125,6 +125,7 @@ func runScanCmd(args []string) {
 		clusterName     = fs.String("cluster-name", os.Getenv("CLUSTER_NAME"), "cluster name shown in the execution logs and report title")
 		logLevel        = fs.String("log-level", envStr("LOG_LEVEL", "info"), "log verbosity: debug, info, warn or err")
 		noCheckUpdate   = fs.Bool("no-check-update-version", envBool("NO_CHECK_UPDATE_VERSION", false), "skip the startup check for a newer artifactor release on GitHub")
+		noOpenBrowser   = fs.Bool("no-open-browser", envBool("NO_OPEN_BROWSER", false), "do not open the web UI in the default browser when the local server starts")
 		showVersion     = fs.Bool("version", false, "print version and exit")
 	)
 	fs.Usage = func() {
@@ -314,6 +315,8 @@ func runScanCmd(args []string) {
 			fatalf("http server: %v", err)
 		}
 	}()
+
+	maybeOpenBrowser(*port, *noOpenBrowser)
 
 	// Refresh the named vulnerabilities list from the GitHub repository at
 	// startup (10s timeout); the embedded copy stays as fallback.
@@ -644,6 +647,41 @@ func openFile(command, file string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Start()
+}
+
+// defaultBrowserCommand returns the platform command that opens a URL in the
+// default browser.
+func defaultBrowserCommand() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "open"
+	case "windows":
+		return "cmd /c start"
+	default:
+		return "xdg-open"
+	}
+}
+
+// maybeOpenBrowser opens the local web UI in the default browser right after
+// the HTTP server starts. It is skipped with --no-open-browser, inside a pod
+// (KUBERNETES_SERVICE_HOST) and in non-interactive runs (no terminal on
+// stdin, e.g. systemd); failures never block the scan.
+func maybeOpenBrowser(port int, disabled bool) {
+	if disabled {
+		logx.Infof("browser auto-open skipped (--no-open-browser)")
+		return
+	}
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return // inside a pod: there is no browser to open
+	}
+	if !isTerminal(os.Stdin) {
+		return // non-interactive run: do not spawn a browser
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d/", port)
+	logx.Infof("opening the web UI at %s ...", url)
+	if err := openFile(defaultBrowserCommand(), url); err != nil {
+		logx.Warnf("cannot open the web UI: %v (open %s manually)", err, url)
+	}
 }
 
 // fatalf logs the message through logx (with the caller's file and line)

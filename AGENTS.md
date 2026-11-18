@@ -155,6 +155,12 @@
   `sudo install` quando o diretório não é gravável); `--no-check-update-version`
   (env `NO_CHECK_UPDATE_VERSION`) pula o check; nunca bloqueia o scan (falha
   de rede vira aviso).
+- Auto-open do SPA: no `scan` local (servidor servindo o SPA — nunca em
+  `--in-cluster`/`install`/`uninstall`/exports), o navegador padrão abre em
+  `http://127.0.0.1:<port>/` logo após o servidor subir (xdg-open/open/cmd
+  start); skips: `--no-open-browser` (env `NO_OPEN_BROWSER`), pod
+  (`KUBERNETES_SERVICE_HOST`) e execuções sem TTY no stdin; falha vira
+  aviso com a URL para abrir manualmente.
 - `--help`/`-h`/`help` na raiz lista os subcomandos.
 
 ## 6. Banco de vulnerabilidades do grype — conhecimento crítico
@@ -256,4 +262,4 @@
   [customer/cluster], --openshift, --image-pull-policy, download direto do
   DB, política fail-fast do DB, formato de log com arquivo:linha, check de
   atualização de versão no início do scan, gerenciamento de clusters no SPA,
-  cancelamento do scan pela UI.)
+  cancelamento do scan pela UI, auto-open do SPA no navegador.)

@@ -965,6 +965,34 @@ func TestStatusSelectedCluster(t *testing.T) {
 	}
 }
 
+func TestScanCancelEndpoint(t *testing.T) {
+	srv, store := testServer(t)
+	h := srv.Handler()
+
+	// no scan running -> 409
+	rec, out := doJSON(t, h, http.MethodPost, "/api/scan/cancel", nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("cancel without scan -> %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if out["error"] != "no scan is running" {
+		t.Errorf("cancel error = %v", out["error"])
+	}
+
+	// scan running -> 200 and the cancel function is invoked
+	canceled := false
+	if !store.TryStartScan(func() { canceled = true }) {
+		t.Fatal("TryStartScan rejected")
+	}
+	rec, _ = doJSON(t, h, http.MethodPost, "/api/scan/cancel", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel with scan -> %d: %s", rec.Code, rec.Body.String())
+	}
+	if !canceled {
+		t.Error("cancel function not invoked")
+	}
+	store.FinishScan()
+}
+
 func TestScanWithoutUsableCluster(t *testing.T) {
 	srv, _ := testServer(t)
 	mgr := clusters.New()

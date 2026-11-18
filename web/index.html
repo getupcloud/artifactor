@@ -51,7 +51,7 @@ button.secondary { background: var(--panel2); border: 1px solid var(--border); c
 .banner.show { display: block; }
 .banner.info { background: rgba(79,156,249,.12); border-color: rgba(79,156,249,.4); color: #a8cfff; }
 .clusterbar {
-  display: none; align-items: center; gap: 12px; flex-wrap: wrap;
+  display: none; align-items: flex-end; gap: 12px; flex-wrap: wrap;
   padding: 8px 18px; background: var(--panel); border-bottom: 1px solid var(--border);
 }
 .clusterbar.show { display: flex; }
@@ -484,10 +484,13 @@ async function refreshStatus() {
       if (problems.length) { banner.textContent = problems.join("\n"); banner.classList.add("show"); }
       else banner.classList.remove("show");
     }
-    $("scan-btn").disabled = state.status.scanning || !state.loaded;
+    const scanning = !!state.status.scanning;
+    // the button stays enabled during a scan: it becomes the cancel button
+    $("scan-btn").disabled = !state.loaded;
+    $("scan-btn").textContent = scanning ? "Cancel scan" : "Scan now";
+    $("scan-btn").classList.toggle("danger", scanning);
     // cluster management is suspended while a scan runs (the scan uses the
     // client captured at start)
-    const scanning = !!state.status.scanning;
     $("cluster-select").disabled = scanning;
     $("context-select").disabled = scanning;
     $("add-cluster-btn").disabled = scanning;
@@ -740,6 +743,25 @@ async function loadArtifacts() {
 /* ---------- actions ---------- */
 
 $("scan-btn").onclick = async () => {
+  // during a scan the button cancels it (images still being scanned go
+  // back to the queued state)
+  if (state.status && state.status.scanning) {
+    $("scan-btn").disabled = true;
+    try {
+      const res = await fetch("/api/scan/cancel", { method: "POST" });
+      if (!res.ok) {
+        let msg = "cancel failed (HTTP " + res.status + ")";
+        try { msg = (await res.json()).error || msg; } catch { /* keep default */ }
+        showBannerError(msg);
+      } else {
+        showBannerInfo("Scan canceled.");
+        refreshImages().catch(() => {});
+      }
+    } catch { /* server restarting */ }
+    $("scan-btn").disabled = false;
+    refreshStatus();
+    return;
+  }
   // disable immediately and show the loading state in the CVE list (if it
   // has nothing to show yet) until the status poll confirms the scan
   $("scan-btn").disabled = true;
@@ -762,7 +784,15 @@ $("scan-btn").onclick = async () => {
 function showBannerError(msg) {
   const banner = $("banner");
   banner.textContent = msg;
+  banner.classList.remove("info");
   banner.classList.add("show");
+}
+
+// showBannerInfo surfaces a transient informational message in the banner.
+function showBannerInfo(msg) {
+  const banner = $("banner");
+  banner.textContent = msg;
+  banner.classList.add("show", "info");
 }
 
 $("export-btn").onclick = () => {

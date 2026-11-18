@@ -424,13 +424,16 @@ func runScanCmd(args []string) {
 				return
 			}
 		}
-		if !store.TryStartScan() {
+		scanCtx, cancel := context.WithCancel(ctx)
+		if !store.TryStartScan(cancel) {
+			cancel()
 			logx.Infof("scan already running, skipping trigger")
 			return
 		}
 		go func() {
 			defer store.FinishScan()
-			if err := sc.RunOnce(ctx, client); err != nil && err != context.Canceled {
+			defer cancel()
+			if err := sc.RunOnce(scanCtx, client); err != nil && err != context.Canceled {
 				logx.Errorf("scan run failed: %v", err)
 				store.SetDBError(err.Error())
 			}

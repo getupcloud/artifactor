@@ -42,7 +42,9 @@
   (cluster do startup + kubeconfigs colados na UI; o conteúdo dos
   kubeconfigs nunca sai do processo).
 - `internal/api/` — servidor HTTP, endpoints JSON, exports HTML/CSV/SBOM;
-  endpoints `/api/clusters` (list/add/remove/select/context).
+  endpoints `/api/clusters` (list/add/remove/select/context) e
+  `/api/scan/cancel` (cancela o scan em andamento; imagens "scanning"
+  voltam a "queued").
 - `internal/registryauth/` — parsing de docker config, extração de authority.
 - `internal/ecr/` — cadeia de credenciais AWS (IRSA) para ECR.
 - `internal/logx/` — logger nivelado; toda linha carrega `arquivo:linha` do
@@ -78,6 +80,12 @@
   (`Scanner.RunOnce(ctx, client)` — client por execução); trocar
   cluster/context limpa os resultados; clusters e kubeconfigs ficam só em
   memória (a API nunca devolve o conteúdo dos kubeconfigs).
+- **Cancelar scan**: durante o scan o botão vira "Cancel scan";
+  `POST /api/scan/cancel` chama o `Store.CancelScan()` (cancel registrado
+  atomicamente no `TryStartScan(cancel)`), que cancela o contexto, devolve
+  imagens "scanning" para "queued" e descarta resultados parciais dos
+  workers; o cancelamento nunca vira erro de DB (`context.Canceled` é
+  ignorado pelos chamadores).
 - Ao fim de cada scan, taxas de erro de acesso por registry
   (`ScanStats.Registries`: erro de acesso = falha na fase syft/pull, erro com
   prefixo `"syft: "`) são logadas (WARNING quando há erros) e exibidas na SPA
@@ -247,4 +255,5 @@
 - (Concluído recentemente: --in-cluster, taxas de erro por registry, prefixo
   [customer/cluster], --openshift, --image-pull-policy, download direto do
   DB, política fail-fast do DB, formato de log com arquivo:linha, check de
-  atualização de versão no início do scan, gerenciamento de clusters no SPA.)
+  atualização de versão no início do scan, gerenciamento de clusters no SPA,
+  cancelamento do scan pela UI.)

@@ -119,6 +119,7 @@ type Store struct {
 	results      map[string]*Result
 	images       []string
 	scanning     bool
+	scanCancel   context.CancelFunc // cancels the running scan (nil when idle)
 	lastScanDone *time.Time
 	dbError      string
 	stats        ScanStats
@@ -213,15 +214,38 @@ func (s *Store) Snapshot(image string) []Result {
 	return out
 }
 
-// TryStartScan marks a scan run as started; returns false if one is already
-// running.
-func (s *Store) TryStartScan() bool {
+// TryStartScan marks a scan run as started, atomically registering the cancel
+// function that stops it; returns false if one is already running.
+func (s *Store) TryStartScan(cancel context.CancelFunc) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.scanning {
 		return false
 	}
 	s.scanning = true
+	s.scanCancel = cancel
+	return true
+}
+
+// CancelScan cancels the running scan, if any, and returns the images that
+// were being scanned to the queued state (their partial results are dropped
+// by the workers once the context is canceled). Returns false when no scan
+// is running.
+func (s *Store) CancelScan() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.scanning {
+		return false
+	}
+	if s.scanCancel != nil {
+		s.scanCancel()
+	}
+	for _, r := range s.results {
+		if r.Status == StatusScanning {
+			r.Status = StatusQueued
+			r.StartedAt = nil
+		}
+	}
 	return true
 }
 
@@ -229,6 +253,7 @@ func (s *Store) FinishScan() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.scanning = false
+	s.scanCancel = nil
 	now := time.Now().UTC()
 	s.lastScanDone = &now
 }
@@ -365,11 +390,17 @@ func (s *Scanner) RunOnce(ctx context.Context, client *k8s.Client) error {
 		go func() {
 			defer wg.Done()
 			for img := range jobs {
+				if ctx.Err() != nil {
+					continue // scan canceled: skip the remaining images
+				}
 				started := time.Now().UTC()
 				n := progress.Add(1)
 				s.opts.Store.MarkScanning(img, started)
 				logx.Infof("scanning %s ... (%d/%d)", img, n, len(disc.Images))
 				result := s.scanImage(ctx, img, disc.PullSecrets[img])
+				if ctx.Err() != nil {
+					continue // canceled: drop the partial result (CancelScan re-queued the image)
+				}
 				result.Instances = disc.Instances[img]
 				s.opts.Store.Put(result)
 				if result.Status == StatusScanned {
@@ -385,11 +416,12 @@ func (s *Scanner) RunOnce(ctx context.Context, client *k8s.Client) error {
 			}
 		}()
 	}
+sendLoop:
 	for _, img := range disc.Images {
 		select {
 		case jobs <- img:
 		case <-ctx.Done():
-			break
+			break sendLoop
 		}
 	}
 	close(jobs)
@@ -594,11 +626,17 @@ func (s *Scanner) runFromSBOM(ctx context.Context) error {
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
+				if ctx.Err() != nil {
+					continue // scan canceled: skip the remaining files
+				}
 				started := time.Now().UTC()
 				n := progress.Add(1)
 				s.opts.Store.MarkScanning(names[j], started)
 				logx.Infof("scanning %s ... (%d/%d)", paths[j], n, len(paths))
 				result := s.scanSBOMFile(ctx, paths[j])
+				if ctx.Err() != nil {
+					continue // canceled: drop the partial result (CancelScan re-queued the image)
+				}
 				result.Image = names[j]
 				s.opts.Store.Put(result)
 				if result.Status == StatusScanned {
@@ -614,11 +652,12 @@ func (s *Scanner) runFromSBOM(ctx context.Context) error {
 			}
 		}()
 	}
+sendLoop:
 	for j := range paths {
 		select {
 		case jobs <- j:
 		case <-ctx.Done():
-			break
+			break sendLoop
 		}
 	}
 	close(jobs)

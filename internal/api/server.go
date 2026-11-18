@@ -148,6 +148,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/clusters/{name}/context", s.handleSetClusterContext)
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("POST /api/scan", s.handleScan)
+	mux.HandleFunc("POST /api/scan/cancel", s.handleCancelScan)
 	mux.HandleFunc("GET /", s.handleSPA)
 	return mux
 }
@@ -834,17 +835,30 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if !s.opts.Store.TryStartScan() {
+	scanCtx, cancel := context.WithCancel(context.Background())
+	if !s.opts.Store.TryStartScan(cancel) {
+		cancel()
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "a scan is already running"})
 		return
 	}
 	go func() {
 		defer s.opts.Store.FinishScan()
-		if err := s.opts.Scanner.RunOnce(context.Background(), client); err != nil && err != context.Canceled {
+		defer cancel()
+		if err := s.opts.Scanner.RunOnce(scanCtx, client); err != nil && err != context.Canceled {
 			s.opts.Store.SetDBError(err.Error())
 		}
 	}()
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "scan started"})
+}
+
+// POST /api/scan/cancel cancels the running scan (images still being
+// scanned go back to the queued state).
+func (s *Server) handleCancelScan(w http.ResponseWriter, r *http.Request) {
+	if !s.opts.Store.CancelScan() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "no scan is running"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "canceled"})
 }
 
 func errString(err error) string {

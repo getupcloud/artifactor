@@ -229,7 +229,7 @@ func TestFetchNamedVulns(t *testing.T) {
 		t.Fatal("expected fetch error for unreachable URL")
 	}
 	groups := getJSON(t, srv.Handler(), "/api/named-vulns")
-	if len(groups) != 4 || groups[0]["name"] != "PHP2Shell" {
+	if len(groups) != 5 || groups[0]["name"] != "PHP2Shell" {
 		t.Fatalf("groups after failed fetch = %v", groups)
 	}
 
@@ -281,8 +281,8 @@ func TestFetchNamedVulns(t *testing.T) {
 func TestNamedVulnsEndpoint(t *testing.T) {
 	srv, _ := testServer(t)
 	groups := getJSON(t, srv.Handler(), "/api/named-vulns")
-	if len(groups) != 4 {
-		t.Fatalf("named vulns = %d entries, want 4", len(groups))
+	if len(groups) != 5 {
+		t.Fatalf("named vulns = %d entries, want 5", len(groups))
 	}
 	if groups[0]["name"] != "PHP2Shell" {
 		t.Errorf("first group = %v", groups[0])
@@ -291,8 +291,12 @@ func TestNamedVulnsEndpoint(t *testing.T) {
 	if len(php) != 3 {
 		t.Errorf("php2shell cves = %v, want 3", php)
 	}
-	if groups[3]["name"] != "Log4Shell" {
-		t.Errorf("last group = %v", groups[3])
+	nginx := groups[3]["cves"].([]any)
+	if groups[3]["name"] != "Nginx2root" || len(nginx) != 5 {
+		t.Errorf("nginx2root group = %v", groups[3])
+	}
+	if groups[4]["name"] != "Log4Shell" {
+		t.Errorf("last group = %v", groups[4])
 	}
 }
 
@@ -482,8 +486,8 @@ func TestExportEndpoint(t *testing.T) {
 	if len(snap.Namespaces) != 3 {
 		t.Errorf("snapshot namespaces = %v, want 3", snap.Namespaces)
 	}
-	if len(snap.NamedVulns) != 4 {
-		t.Errorf("snapshot namedVulns = %v, want 4", snap.NamedVulns)
+	if len(snap.NamedVulns) != 5 {
+		t.Errorf("snapshot namedVulns = %v, want 5", snap.NamedVulns)
 	}
 	if snap.GeneratedAt == "" {
 		t.Error("snapshot missing generatedAt")

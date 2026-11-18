@@ -45,6 +45,18 @@ type Discovery struct {
 	Instances map[string][]Instance
 }
 
+// DefaultKubeconfigPath returns the kubeconfig path used by New(): the
+// KUBECONFIG env var, or ~/.kube/config.
+func DefaultKubeconfigPath() string {
+	if kubeconfig := os.Getenv("KUBECONFIG"); kubeconfig != "" {
+		return kubeconfig
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".kube", "config")
+	}
+	return ""
+}
+
 // New builds a client from the in-cluster configuration (kubernetes.default.svc
 // service account), falling back to the local kubeconfig for development.
 // The returned mode is "in-cluster" or "kubeconfig".
@@ -53,26 +65,65 @@ func New() (*Client, string, error) {
 	mode := "in-cluster"
 	if err != nil {
 		mode = "kubeconfig"
-		kubeconfig := os.Getenv("KUBECONFIG")
-		if kubeconfig == "" {
-			if home, herr := os.UserHomeDir(); herr == nil {
-				kubeconfig = filepath.Join(home, ".kube", "config")
-			}
-		}
-		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+		cfg, err = clientcmd.BuildConfigFromFlags("", DefaultKubeconfigPath())
 		if err != nil {
 			return nil, "", fmt.Errorf("no cluster access: in-cluster config unavailable and kubeconfig load failed: %w", err)
 		}
 	}
+	client, err := newForConfig(cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	return client, mode, nil
+}
+
+// NewFromKubeconfig builds a client from raw kubeconfig contents, using the
+// given context (contextName must be a valid context of the kubeconfig).
+func NewFromKubeconfig(data []byte, contextName string) (*Client, error) {
+	cfg, err := clientcmd.Load(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse kubeconfig: %w", err)
+	}
+	restCfg, err := clientcmd.NewDefaultClientConfig(*cfg, &clientcmd.ConfigOverrides{
+		CurrentContext: contextName,
+	}).ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("kubeconfig client config: %w", err)
+	}
+	return newForConfig(restCfg)
+}
+
+// KubeconfigContexts parses raw kubeconfig contents and returns the sorted
+// context names and the effective current context (the kubeconfig's
+// current-context, or the first context name when none is set).
+func KubeconfigContexts(data []byte) ([]string, string, error) {
+	cfg, err := clientcmd.Load(data)
+	if err != nil {
+		return nil, "", fmt.Errorf("parse kubeconfig: %w", err)
+	}
+	names := make([]string, 0, len(cfg.Contexts))
+	for name := range cfg.Contexts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	current := cfg.CurrentContext
+	if current == "" && len(names) > 0 {
+		current = names[0]
+	}
+	return names, current, nil
+}
+
+// newForConfig wraps a rest.Config into a Client.
+func newForConfig(cfg *rest.Config) (*Client, error) {
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		return nil, "", fmt.Errorf("create kubernetes client: %w", err)
+		return nil, fmt.Errorf("create kubernetes client: %w", err)
 	}
 	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {
-		return nil, "", fmt.Errorf("create dynamic kubernetes client: %w", err)
+		return nil, fmt.Errorf("create dynamic kubernetes client: %w", err)
 	}
-	return &Client{cs: cs, cfg: cfg, dyn: dyn}, mode, nil
+	return &Client{cs: cs, cfg: cfg, dyn: dyn}, nil
 }
 
 // Discover lists pods (restricted to the given namespaces, or all namespaces

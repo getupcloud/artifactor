@@ -277,7 +277,6 @@ func (s *Store) DBError() string {
 
 // Options configures a Scanner.
 type Options struct {
-	Client      *k8s.Client
 	Namespaces  []string               // restrict scanning to these namespaces (empty = all)
 	FromSBOM    string                 // path to an SBOM file or directory of SBOM files (non-recursive): run grype only, skipping syft
 	Provider    vulnerability.Provider // initial grype vulnerability DB provider (may be nil; set later via SetProvider)
@@ -334,8 +333,9 @@ func defaultMatchers() []match.Matcher {
 	})
 }
 
-// RunOnce discovers the current set of images and scans all of them.
-func (s *Scanner) RunOnce(ctx context.Context) error {
+// RunOnce discovers the current set of images of the given cluster and scans
+// all of them. client is nil in --from-sbom mode (which does not use it).
+func (s *Scanner) RunOnce(ctx context.Context, client *k8s.Client) error {
 	// Return freed pages to the OS after the run: the Go runtime tends to
 	// hold onto heap it no longer needs, which looks like a leak in RSS.
 	defer debug.FreeOSMemory()
@@ -343,9 +343,12 @@ func (s *Scanner) RunOnce(ctx context.Context) error {
 	if s.opts.FromSBOM != "" {
 		return s.runFromSBOM(ctx)
 	}
+	if client == nil {
+		return errors.New("no cluster selected")
+	}
 
 	start := time.Now()
-	disc, err := s.opts.Client.Discover(ctx, s.opts.Namespaces)
+	disc, err := client.Discover(ctx, s.opts.Namespaces)
 	if err != nil {
 		return fmt.Errorf("discover images: %w", err)
 	}

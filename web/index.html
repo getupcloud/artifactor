@@ -50,6 +50,38 @@ button.secondary { background: var(--panel2); border: 1px solid var(--border); c
 }
 .banner.show { display: block; }
 .banner.info { background: rgba(79,156,249,.12); border-color: rgba(79,156,249,.4); color: #a8cfff; }
+.clusterbar {
+  display: none; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 18px; background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.clusterbar.show { display: flex; }
+.clusterbar label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.clusterbar select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; font-size: 13px; min-width: 170px; max-width: 340px;
+}
+.clusterbar select:disabled { opacity: .5; }
+button.danger { background: var(--err); }
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(8,11,15,.7);
+  display: none; align-items: center; justify-content: center; z-index: 100;
+}
+.modal-overlay.show { display: flex; }
+.modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 18px; width: min(680px, 94vw); display: flex; flex-direction: column; gap: 10px;
+}
+.modal h3 { margin: 0; font-size: 15px; }
+.modal label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.modal input[type=text], .modal textarea {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%;
+}
+.modal textarea { height: 220px; resize: vertical; font: 12px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.modal .actions { display: flex; justify-content: flex-end; gap: 8px; }
+.modal .error { display: none; color: #ffb3b5; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+.modal .error.show { display: block; }
+.clusterbar .hint { font-size: 12px; color: #ffb3b5; word-break: break-word; }
 .stats {
   display: flex; gap: 10px; flex-wrap: wrap; padding: 12px 18px 0;
 }
@@ -182,6 +214,35 @@ tr.expand-row:hover td { background: var(--bg); }
   <button class="secondary" id="csv-btn" title="Download the CVE report (current filters) as CSV">CSV</button>
   <button id="scan-btn" title="Scan every image in the cluster" disabled>Scan now</button>
 </header>
+
+<div class="clusterbar" id="cluster-bar">
+  <label>Cluster
+    <select id="cluster-select"></select>
+  </label>
+  <label id="context-label">Context
+    <select id="context-select"></select>
+  </label>
+  <button class="secondary" id="add-cluster-btn" title="Add a cluster by pasting its kubeconfig">+ Add cluster</button>
+  <button class="secondary" id="remove-cluster-btn" title="Remove the selected cluster">Remove</button>
+  <span class="hint" id="cluster-error"></span>
+</div>
+
+<div class="modal-overlay" id="add-modal">
+  <div class="modal">
+    <h3>Add cluster</h3>
+    <label>Name
+      <input type="text" id="add-name" placeholder="e.g. production">
+    </label>
+    <label title="The kubeconfig is kept in memory only and is never sent back to the browser">Kubeconfig
+      <textarea id="add-kubeconfig" placeholder="Paste the kubeconfig contents here…"></textarea>
+    </label>
+    <div class="error" id="add-error"></div>
+    <div class="actions">
+      <button class="secondary" id="add-cancel">Cancel</button>
+      <button id="add-ok">Add</button>
+    </div>
+  </div>
+</div>
 
 <div class="banner" id="banner"></div>
 
@@ -348,6 +409,8 @@ const state = {
   imageSearch: "",
   lastQuery: null,     // /api/cves query string of the last render
   loaded: false,       // first CVE load finished (scan button enabled from here on)
+  clusters: [],        // /api/clusters entries ([] hides the cluster bar)
+  selectedCluster: "", // name of the cluster the scan targets
 };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
@@ -416,11 +479,19 @@ async function refreshStatus() {
     if (!SNAPSHOT) {
       const problems = [];
       if (state.status.k8sError) problems.push("Kubernetes: " + state.status.k8sError);
+      if (state.status.clusterError) problems.push("Cluster: " + state.status.clusterError);
       if (db.error) problems.push("Vulnerability DB: " + db.error);
       if (problems.length) { banner.textContent = problems.join("\n"); banner.classList.add("show"); }
       else banner.classList.remove("show");
     }
     $("scan-btn").disabled = state.status.scanning || !state.loaded;
+    // cluster management is suspended while a scan runs (the scan uses the
+    // client captured at start)
+    const scanning = !!state.status.scanning;
+    $("cluster-select").disabled = scanning;
+    $("context-select").disabled = scanning;
+    $("add-cluster-btn").disabled = scanning;
+    $("remove-cluster-btn").disabled = scanning;
   } catch (e) { /* server restarting */ }
 }
 
@@ -676,10 +747,23 @@ $("scan-btn").onclick = async () => {
     $("empty-msg").textContent = "Loading scan";
     $("empty-msg").style.display = "block";
   }
-  try { await fetch("/api/scan", { method: "POST" }); }
-  catch { /* server restarting */ }
+  try {
+    const res = await fetch("/api/scan", { method: "POST" });
+    if (!res.ok) {
+      let msg = "scan request failed (HTTP " + res.status + ")";
+      try { msg = (await res.json()).error || msg; } catch { /* keep default */ }
+      showBannerError(msg);
+    }
+  } catch { /* server restarting */ }
   refreshStatus();
 };
+
+// showBannerError surfaces a transient error in the banner.
+function showBannerError(msg) {
+  const banner = $("banner");
+  banner.textContent = msg;
+  banner.classList.add("show");
+}
 
 $("export-btn").onclick = () => {
   if (SNAPSHOT) {
@@ -745,6 +829,180 @@ function downloadCSVClient() {
   a.click();
   URL.revokeObjectURL(a.href);
 }
+
+/* ---------- cluster management ---------- */
+
+// loadClusters refreshes the cluster bar from /api/clusters. The bar only
+// shows in live mode (never in snapshots) when the server reports clusters.
+async function loadClusters() {
+  if (SNAPSHOT) return;
+  let data;
+  try { data = await api("/api/clusters"); }
+  catch { return; }
+  const list = data.clusters || [];
+  state.clusters = list;
+  if (!list.length) {
+    $("cluster-bar").classList.remove("show");
+    state.selectedCluster = "";
+    return;
+  }
+  $("cluster-bar").classList.add("show");
+  const serverSelected = data.selected || "";
+  state.selectedCluster = list.some((c) => c.name === serverSelected) ? serverSelected : list[0].name;
+  const sel = $("cluster-select");
+  const keep = sel.value || state.selectedCluster;
+  sel.innerHTML = "";
+  for (const c of list) {
+    const opt = document.createElement("option");
+    opt.value = c.name;
+    opt.textContent = c.name + (c.error ? " (error)" : "");
+    sel.appendChild(opt);
+  }
+  sel.value = list.some((c) => c.name === keep) ? keep : state.selectedCluster;
+  state.selectedCluster = sel.value;
+  renderContextSelect();
+}
+
+// renderContextSelect fills the context selector with the contexts of the
+// currently selected cluster (hidden when the cluster has none).
+function renderContextSelect() {
+  const cluster = state.clusters.find((c) => c.name === state.selectedCluster);
+  const ctxSel = $("context-select");
+  const ctxLabel = $("context-label");
+  const errHint = $("cluster-error");
+  errHint.textContent = "";
+  ctxSel.innerHTML = "";
+  if (cluster && cluster.error) {
+    errHint.textContent = cluster.error;
+  }
+  if (!cluster || !cluster.contexts || !cluster.contexts.length) {
+    ctxLabel.style.display = "none";
+    return;
+  }
+  ctxLabel.style.display = "";
+  for (const name of cluster.contexts) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    ctxSel.appendChild(opt);
+  }
+  ctxSel.value = cluster.currentContext || cluster.contexts[0];
+}
+
+// selectCluster switches the scan target; the server drops the results of
+// the previous cluster, so the whole view refreshes.
+async function selectCluster(name) {
+  try {
+    const res = await fetch("/api/clusters/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      showClusterError(await errorText(res));
+      loadClusters();
+      return;
+    }
+  } catch (e) { return; }
+  state.selectedCluster = name;
+  $("cluster-select").value = name;
+  state.selected = "";
+  expanded.clear();
+  renderContextSelect();
+  poll();
+}
+
+// errorText extracts the {"error": "..."} message from a failed response.
+async function errorText(res) {
+  try { return (await res.json()).error || ("HTTP " + res.status); }
+  catch { return "HTTP " + res.status; }
+}
+
+function showClusterError(msg) {
+  const hint = $("cluster-error");
+  hint.textContent = msg;
+}
+
+$("cluster-select").onchange = () => selectCluster($("cluster-select").value);
+
+$("context-select").onchange = async () => {
+  const name = state.selectedCluster;
+  const context = $("context-select").value;
+  try {
+    const res = await fetch("/api/clusters/" + encodeURIComponent(name) + "/context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context }),
+    });
+    if (!res.ok) {
+      showClusterError(await errorText(res));
+      loadClusters();
+      return;
+    }
+  } catch (e) { return; }
+  // the server drops the previous results; refresh everything
+  state.selected = "";
+  expanded.clear();
+  loadClusters();
+  poll();
+};
+
+$("add-cluster-btn").onclick = () => {
+  $("add-name").value = "";
+  $("add-kubeconfig").value = "";
+  $("add-error").classList.remove("show");
+  $("add-modal").classList.add("show");
+  $("add-name").focus();
+};
+
+$("add-cancel").onclick = () => $("add-modal").classList.remove("show");
+
+$("add-ok").onclick = async () => {
+  const name = $("add-name").value.trim();
+  const kubeconfig = $("add-kubeconfig").value;
+  if (!name || !kubeconfig) {
+    $("add-error").textContent = "Name and kubeconfig are required.";
+    $("add-error").classList.add("show");
+    return;
+  }
+  $("add-ok").disabled = true;
+  try {
+    const res = await fetch("/api/clusters", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, kubeconfig }),
+    });
+    if (!res.ok) {
+      $("add-error").textContent = await errorText(res);
+      $("add-error").classList.add("show");
+      return;
+    }
+    $("add-modal").classList.remove("show");
+    await selectCluster(name); // select the new cluster (clears the old results)
+  } catch (e) {
+    $("add-error").textContent = "Request failed: " + e;
+    $("add-error").classList.add("show");
+  } finally {
+    $("add-ok").disabled = false;
+  }
+};
+
+$("remove-cluster-btn").onclick = async () => {
+  const name = state.selectedCluster;
+  if (!name) return;
+  if (!confirm('Remove cluster "' + name + '"? The kubeconfig is forgotten; the results are cleared.')) return;
+  try {
+    const res = await fetch("/api/clusters/" + encodeURIComponent(name), { method: "DELETE" });
+    if (!res.ok) {
+      showClusterError(await errorText(res));
+      return;
+    }
+  } catch (e) { return; }
+  state.selected = "";
+  expanded.clear();
+  loadClusters();
+  poll();
+};
 
 $("img-search").oninput = () => { state.imageSearch = $("img-search").value; renderImageList(); };
 
@@ -849,6 +1107,7 @@ async function loadNamespaces() {
 async function poll() {
   await refreshStatus();
   await refreshImages().catch(() => {});
+  loadClusters().catch(() => {});
   loadNamespaces().catch(() => {});
   loadCVEs().catch(() => {});
   if (state.status && state.status.scanning) loadArtifacts().catch(() => {});
@@ -876,6 +1135,7 @@ if (SNAPSHOT) {
 poll();
 loadArtifacts();
 loadNamedVulns();
+loadClusters().catch(() => {});
 loadNamespaces().catch(() => {});
 if (!SNAPSHOT) setInterval(poll, 8000);
 </script>

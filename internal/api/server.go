@@ -9,8 +9,8 @@ import (
 	"crypto/tls"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/getupcloud/artifactor/internal/logx"
 	"io"
 	"net/http"
 	"net/url"
@@ -19,7 +19,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/getupcloud/artifactor/internal/clusters"
 	"github.com/getupcloud/artifactor/internal/k8s"
+	"github.com/getupcloud/artifactor/internal/logx"
 	"github.com/getupcloud/artifactor/internal/scanner"
 )
 
@@ -50,6 +52,9 @@ type Options struct {
 	NamesURL  string // override for the GitHub fetch (defaults to defaultNamesURL; mainly for tests)
 	Mode      string // "in-cluster" or "kubeconfig"
 	Insecure  bool   // skip TLS certificate verification for the names.json refresh
+	// Clusters is the cluster registry the scan endpoint targets (nil in
+	// exports and tests, where no live scanning happens).
+	Clusters *clusters.Manager
 	// Optional context shown in the report title and status payload.
 	CustomerName string
 	ClusterName  string
@@ -136,6 +141,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/named-vulns", s.handleNamedVulns)
 	mux.HandleFunc("GET /api/namespaces", s.handleNamespaces)
 	mux.HandleFunc("GET /api/artifacts", s.handleArtifacts)
+	mux.HandleFunc("GET /api/clusters", s.handleClusters)
+	mux.HandleFunc("POST /api/clusters", s.handleAddCluster)
+	mux.HandleFunc("DELETE /api/clusters/{name}", s.handleRemoveCluster)
+	mux.HandleFunc("POST /api/clusters/select", s.handleSelectCluster)
+	mux.HandleFunc("POST /api/clusters/{name}/context", s.handleSetClusterContext)
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("POST /api/scan", s.handleScan)
 	mux.HandleFunc("GET /", s.handleSPA)
@@ -167,15 +177,28 @@ func (s *Server) statusPayload() map[string]any {
 	if storeErr := s.opts.Store.DBError(); storeErr != "" {
 		db.Error = storeErr
 	}
+	mode := s.opts.Mode
+	selectedCluster, clusterError := "", ""
+	if s.opts.Clusters != nil {
+		selectedCluster = s.opts.Clusters.SelectedName()
+		if sel := s.opts.Clusters.Selected(); sel != nil {
+			if sel.Mode != "" {
+				mode = sel.Mode
+			}
+			clusterError = sel.Error
+		}
+	}
 	return map[string]any{
-		"mode":         s.opts.Mode,
-		"k8sError":     errString(s.opts.K8sErr),
-		"scanning":     s.opts.Store.IsScanning(),
-		"lastScanDone": s.opts.Store.LastScanDone(),
-		"lastScan":     s.opts.Store.Stats(),
-		"customer":     s.opts.CustomerName,
-		"cluster":      s.opts.ClusterName,
-		"db":           db,
+		"mode":            mode,
+		"k8sError":        errString(s.opts.K8sErr),
+		"scanning":        s.opts.Store.IsScanning(),
+		"lastScanDone":    s.opts.Store.LastScanDone(),
+		"lastScan":        s.opts.Store.Stats(),
+		"customer":        s.opts.CustomerName,
+		"cluster":         s.opts.ClusterName,
+		"selectedCluster": selectedCluster,
+		"clusterError":    clusterError,
+		"db":              db,
 	}
 }
 
@@ -484,6 +507,130 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.artifactNames(q.Get("image"), q.Get("q")))
 }
 
+/* ---------- clusters ---------- */
+
+// GET /api/clusters returns the registered clusters (names, modes, contexts
+// and errors — never the kubeconfig contents) and the selected one.
+func (s *Server) handleClusters(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Clusters == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"clusters": []clusters.Info{}, "selected": ""})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"clusters": s.opts.Clusters.List(),
+		"selected": s.opts.Clusters.SelectedName(),
+	})
+}
+
+// addClusterRequest is the body of POST /api/clusters.
+type addClusterRequest struct {
+	Name       string `json:"name"`
+	Kubeconfig string `json:"kubeconfig"`
+}
+
+// maxKubeconfigSize bounds the body of POST /api/clusters.
+const maxKubeconfigSize = 1 << 20 // 1 MiB
+
+// POST /api/clusters registers a cluster from a pasted kubeconfig.
+func (s *Server) handleAddCluster(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Clusters == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "cluster management not available"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxKubeconfigSize)
+	var req addClusterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body: " + err.Error()})
+		return
+	}
+	if err := s.opts.Clusters.Add(req.Name, req.Kubeconfig); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, clusters.ErrDuplicate) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"name":     strings.TrimSpace(req.Name),
+		"selected": s.opts.Clusters.SelectedName(),
+	})
+}
+
+// DELETE /api/clusters/{name} removes a cluster.
+func (s *Server) handleRemoveCluster(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Clusters == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "cluster management not available"})
+		return
+	}
+	name := r.PathValue("name")
+	wasSelected := s.opts.Clusters.SelectedName() == name
+	if err := s.opts.Clusters.Remove(name); err != nil {
+		status := http.StatusNotFound
+		if errors.Is(err, clusters.ErrLastCluster) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+	if wasSelected {
+		// the results belong to the removed cluster
+		s.opts.Store.SetImages(nil)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+// selectClusterRequest is the body of POST /api/clusters/select.
+type selectClusterRequest struct {
+	Name string `json:"name"`
+}
+
+// POST /api/clusters/select makes a cluster the scan target and drops the
+// results of the previous one.
+func (s *Server) handleSelectCluster(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Clusters == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "cluster management not available"})
+		return
+	}
+	var req selectClusterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body: " + err.Error()})
+		return
+	}
+	if err := s.opts.Clusters.Select(req.Name); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	s.opts.Store.SetImages(nil)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "selected"})
+}
+
+// setContextRequest is the body of POST /api/clusters/{name}/context.
+type setContextRequest struct {
+	Context string `json:"context"`
+}
+
+// POST /api/clusters/{name}/context switches the kubeconfig context of a
+// cluster and drops the current results (they belong to the previous
+// context).
+func (s *Server) handleSetClusterContext(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Clusters == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "cluster management not available"})
+		return
+	}
+	var req setContextRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body: " + err.Error()})
+		return
+	}
+	if err := s.opts.Clusters.SetContext(r.PathValue("name"), req.Context); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.opts.Store.SetImages(nil)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "context set"})
+}
+
 // exportSnapshot is the data embedded in an exported report.
 type exportSnapshot struct {
 	GeneratedAt      time.Time           `json:"generatedAt"`
@@ -669,9 +816,23 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
-	if s.opts.Scanner == nil || s.opts.K8sErr != nil {
+	if s.opts.Scanner == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "scanner not available: " + errString(s.opts.K8sErr)})
 		return
+	}
+	// the scan targets the selected cluster; --from-sbom mode needs none
+	var client *k8s.Client
+	if s.opts.Mode != "from-sbom" {
+		if s.opts.Clusters == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "no cluster available"})
+			return
+		}
+		var err error
+		client, err = s.opts.Clusters.SelectedClient()
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 	if !s.opts.Store.TryStartScan() {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "a scan is already running"})
@@ -679,7 +840,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 	go func() {
 		defer s.opts.Store.FinishScan()
-		if err := s.opts.Scanner.RunOnce(context.Background()); err != nil && err != context.Canceled {
+		if err := s.opts.Scanner.RunOnce(context.Background(), client); err != nil && err != context.Canceled {
 			s.opts.Store.SetDBError(err.Error())
 		}
 	}()

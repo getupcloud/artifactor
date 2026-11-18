@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getupcloud/artifactor/internal/clusters"
 	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/scanner"
 )
@@ -719,6 +721,259 @@ func TestExportDataFilesChunking(t *testing.T) {
 	}
 	if !baseSeen {
 		t.Error("no chunk carries the base fields")
+	}
+}
+
+// testKubeconfig is a minimal valid kubeconfig with two contexts, shared by
+// the cluster endpoint tests.
+const testKubeconfig = `apiVersion: v1
+kind: Config
+clusters:
+- name: cluster-one
+  cluster:
+    server: https://127.0.0.1:6443
+contexts:
+- name: ctx-beta
+  context:
+    cluster: cluster-one
+    user: user-one
+- name: ctx-alpha
+  context:
+    cluster: cluster-one
+    user: user-one
+current-context: ctx-beta
+users:
+- name: user-one
+  user:
+    token: abc123
+`
+
+func doJSON(t *testing.T, h http.Handler, method, path string, body any) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	var reader *bytes.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader = bytes.NewReader(data)
+	} else {
+		reader = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	out := map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("%s %s: bad JSON response: %v (%s)", method, path, err, rec.Body.String())
+	}
+	return rec, out
+}
+
+func TestClustersListAndAdd(t *testing.T) {
+	srv, _ := testServer(t)
+	mgr := clusters.New()
+	if err := mgr.AddStartup("default", "kubeconfig", nil, nil, errors.New("no access")); err != nil {
+		t.Fatal(err)
+	}
+	srv.opts.Clusters = mgr
+	h := srv.Handler()
+
+	// GET: startup entry listed with its error, never the kubeconfig
+	rec, out := doJSON(t, h, http.MethodGet, "/api/clusters", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/clusters -> %d", rec.Code)
+	}
+	list, _ := out["clusters"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("clusters = %v, want 1 entry", list)
+	}
+	first := list[0].(map[string]any)
+	if first["name"] != "default" || first["error"] != "no access" {
+		t.Errorf("startup entry = %v", first)
+	}
+	if _, leaked := first["kubeconfig"]; leaked {
+		t.Error("kubeconfig contents leaked in the API response")
+	}
+	if out["selected"] != "default" {
+		t.Errorf("selected = %v", out["selected"])
+	}
+
+	// POST valid kubeconfig -> 201; the new cluster is listed with contexts
+	rec, out = doJSON(t, h, http.MethodPost, "/api/clusters", map[string]any{"name": "prod", "kubeconfig": testKubeconfig})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /api/clusters -> %d: %s", rec.Code, rec.Body.String())
+	}
+	rec, out = doJSON(t, h, http.MethodGet, "/api/clusters", nil)
+	list, _ = out["clusters"].([]any)
+	if len(list) != 2 {
+		t.Fatalf("clusters after add = %v", list)
+	}
+	prod := list[1].(map[string]any)
+	ctxs, _ := prod["contexts"].([]any)
+	if len(ctxs) != 2 || prod["currentContext"] != "ctx-beta" {
+		t.Errorf("prod entry = %v", prod)
+	}
+	if prod["error"] != nil {
+		t.Errorf("prod error = %v", prod["error"])
+	}
+
+	// invalid kubeconfig -> 400
+	rec, _ = doJSON(t, h, http.MethodPost, "/api/clusters", map[string]any{"name": "bad", "kubeconfig": "garbage"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid kubeconfig -> %d, want 400", rec.Code)
+	}
+
+	// duplicate name -> 409
+	rec, _ = doJSON(t, h, http.MethodPost, "/api/clusters", map[string]any{"name": "prod", "kubeconfig": testKubeconfig})
+	if rec.Code != http.StatusConflict {
+		t.Errorf("duplicate name -> %d, want 409", rec.Code)
+	}
+}
+
+func TestClusterSelectClearsStore(t *testing.T) {
+	srv, store := testServer(t)
+	mgr := clusters.New()
+	if err := mgr.AddStartup("default", "kubeconfig", nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Add("prod", testKubeconfig); err != nil {
+		t.Fatal(err)
+	}
+	srv.opts.Clusters = mgr
+	h := srv.Handler()
+
+	if len(store.Summaries()) == 0 {
+		t.Fatal("fixture store should start with results")
+	}
+	rec, _ := doJSON(t, h, http.MethodPost, "/api/clusters/select", map[string]any{"name": "prod"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("select -> %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(store.Summaries()) != 0 {
+		t.Error("select did not clear the store")
+	}
+	if mgr.SelectedName() != "prod" {
+		t.Errorf("selected = %q, want prod", mgr.SelectedName())
+	}
+
+	// unknown cluster -> 404
+	rec, _ = doJSON(t, h, http.MethodPost, "/api/clusters/select", map[string]any{"name": "nope"})
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("select unknown -> %d, want 404", rec.Code)
+	}
+}
+
+func TestClusterRemove(t *testing.T) {
+	srv, store := testServer(t)
+	mgr := clusters.New()
+	if err := mgr.AddStartup("default", "kubeconfig", nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Add("prod", testKubeconfig); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Select("prod"); err != nil {
+		t.Fatal(err)
+	}
+	srv.opts.Clusters = mgr
+	h := srv.Handler()
+
+	// removing the selected cluster clears the store and reselects
+	rec, _ := doJSON(t, h, http.MethodDelete, "/api/clusters/prod", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("remove -> %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(store.Summaries()) != 0 {
+		t.Error("removing the selected cluster did not clear the store")
+	}
+	if mgr.SelectedName() != "default" {
+		t.Errorf("selected after remove = %q, want default", mgr.SelectedName())
+	}
+
+	// the last cluster cannot be removed
+	rec, _ = doJSON(t, h, http.MethodDelete, "/api/clusters/default", nil)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("remove last -> %d, want 409", rec.Code)
+	}
+
+	// unknown -> 404
+	rec, _ = doJSON(t, h, http.MethodDelete, "/api/clusters/nope", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("remove unknown -> %d, want 404", rec.Code)
+	}
+}
+
+func TestClusterSetContext(t *testing.T) {
+	srv, store := testServer(t)
+	mgr := clusters.New()
+	if err := mgr.AddStartup("default", "kubeconfig", nil, []byte(testKubeconfig), nil); err != nil {
+		t.Fatal(err)
+	}
+	srv.opts.Clusters = mgr
+	h := srv.Handler()
+
+	rec, _ := doJSON(t, h, http.MethodPost, "/api/clusters/default/context", map[string]any{"context": "ctx-alpha"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set context -> %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(store.Summaries()) != 0 {
+		t.Error("context switch did not clear the store")
+	}
+	rec, out := doJSON(t, h, http.MethodGet, "/api/clusters", nil)
+	_ = rec
+	list := out["clusters"].([]any)
+	if list[0].(map[string]any)["currentContext"] != "ctx-alpha" {
+		t.Errorf("current context = %v, want ctx-alpha", list[0].(map[string]any)["currentContext"])
+	}
+
+	// unknown context -> 400
+	rec, _ = doJSON(t, h, http.MethodPost, "/api/clusters/default/context", map[string]any{"context": "ctx-nope"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown context -> %d, want 400", rec.Code)
+	}
+}
+
+func TestStatusSelectedCluster(t *testing.T) {
+	srv, _ := testServer(t)
+	mgr := clusters.New()
+	if err := mgr.AddStartup("default", "kubeconfig", nil, nil, errors.New("boom")); err != nil {
+		t.Fatal(err)
+	}
+	srv.opts.Clusters = mgr
+	srv.opts.Mode = "in-cluster" // overridden by the selected cluster's mode
+
+	rec, out := doJSON(t, srv.Handler(), http.MethodGet, "/api/status", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status -> %d", rec.Code)
+	}
+	if out["selectedCluster"] != "default" {
+		t.Errorf("selectedCluster = %v", out["selectedCluster"])
+	}
+	if out["clusterError"] != "boom" {
+		t.Errorf("clusterError = %v", out["clusterError"])
+	}
+	if out["mode"] != "kubeconfig" {
+		t.Errorf("mode = %v, want the selected cluster mode", out["mode"])
+	}
+}
+
+func TestScanWithoutUsableCluster(t *testing.T) {
+	srv, _ := testServer(t)
+	mgr := clusters.New()
+	if err := mgr.AddStartup("default", "kubeconfig", nil, nil, errors.New("no access")); err != nil {
+		t.Fatal(err)
+	}
+	srv.opts.Clusters = mgr
+	srv.opts.Mode = "kubeconfig"
+	srv.opts.Scanner = scanner.New(scanner.Options{Store: srv.opts.Store})
+
+	rec, _ := doJSON(t, srv.Handler(), http.MethodPost, "/api/scan", nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("scan without usable cluster -> %d, want 503: %s", rec.Code, rec.Body.String())
 	}
 }
 

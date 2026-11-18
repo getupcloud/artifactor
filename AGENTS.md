@@ -35,8 +35,14 @@
   scan e substituição do binário local (download do asset tar.gz, extração
   do binário, rename atômico, fallback `sudo install`).
 - `internal/k8s/` — wrapper do client (discovery, pull secrets, cadeia de
-  owners), `podops.go` (apply/delete de objetos, helpers de pod, exec).
-- `internal/api/` — servidor HTTP, endpoints JSON, exports HTML/CSV/SBOM.
+  owners), `podops.go` (apply/delete de objetos, helpers de pod, exec);
+  `NewFromKubeconfig`/`KubeconfigContexts` (clients a partir de conteúdo de
+  kubeconfig).
+- `internal/clusters/` — registro de clusters em memória para o SPA
+  (cluster do startup + kubeconfigs colados na UI; o conteúdo dos
+  kubeconfigs nunca sai do processo).
+- `internal/api/` — servidor HTTP, endpoints JSON, exports HTML/CSV/SBOM;
+  endpoints `/api/clusters` (list/add/remove/select/context).
 - `internal/registryauth/` — parsing de docker config, extração de authority.
 - `internal/ecr/` — cadeia de credenciais AWS (IRSA) para ECR.
 - `internal/logx/` — logger nivelado; toda linha carrega `arquivo:linha` do
@@ -66,6 +72,12 @@
   (SBOM syft + pacotes grype) → matchers grype (stock CPEs, dpkg epoch zero,
   rpm epoch auto) → Store em memória → SPA/API.
 - Resultados **apenas em memória** (sem persistência).
+- **Clusters no SPA**: barra no topo gerencia clusters (adicionar com nome +
+  kubeconfig colado, selecionar cluster/context, remover); o cluster do
+  startup é a entrada inicial; o scan sempre mira o cluster selecionado
+  (`Scanner.RunOnce(ctx, client)` — client por execução); trocar
+  cluster/context limpa os resultados; clusters e kubeconfigs ficam só em
+  memória (a API nunca devolve o conteúdo dos kubeconfigs).
 - Ao fim de cada scan, taxas de erro de acesso por registry
   (`ScanStats.Registries`: erro de acesso = falha na fase syft/pull, erro com
   prefixo `"syft: "`) são logadas (WARNING quando há erros) e exibidas na SPA
@@ -230,7 +242,9 @@
 - Watch por informers (rescan automático em mudanças) em vez de só intervalo.
 - UI de override de credenciais por imagem.
 - Persistência de resultados (disco/DB) em vez de só memória.
+- Persistência dos clusters adicionados (hoje morrem com o processo, como os
+  resultados).
 - (Concluído recentemente: --in-cluster, taxas de erro por registry, prefixo
   [customer/cluster], --openshift, --image-pull-policy, download direto do
   DB, política fail-fast do DB, formato de log com arquivo:linha, check de
-  atualização de versão no início do scan.)
+  atualização de versão no início do scan, gerenciamento de clusters no SPA.)

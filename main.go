@@ -25,6 +25,7 @@ import (
 	flag "github.com/spf13/pflag" // flags defined and displayed with --
 
 	"github.com/getupcloud/artifactor/internal/api"
+	"github.com/getupcloud/artifactor/internal/clusters"
 	"github.com/getupcloud/artifactor/internal/ecr"
 	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/logx"
@@ -226,14 +227,35 @@ func runScanCmd(args []string) {
 	// 1. Kubernetes client: in-cluster (kubernetes.default.svc) or kubeconfig.
 	//    With --from-sbom no cluster access is needed: syft and the image
 	//    download are skipped, only the local SBOM file(s) are scanned.
+	//    The startup cluster becomes the initial entry of the cluster
+	//    registry the SPA manages (further clusters can be added by pasting
+	//    kubeconfigs in the UI).
 	var k8sClient *k8s.Client
 	mode, k8sErr := "from-sbom", error(nil)
+	mgr := clusters.New()
 	if *fromSBOM == "" {
 		k8sClient, mode, k8sErr = k8s.New()
 		if k8sErr != nil {
 			logx.Warnf("%v (the web UI will show this error)", k8sErr)
 		} else {
 			logx.Infof("kubernetes client ready (mode: %s)", mode)
+		}
+		startupName := *clusterName
+		if startupName == "" {
+			if mode == "in-cluster" {
+				startupName = "in-cluster"
+			} else {
+				startupName = "default"
+			}
+		}
+		var kubeconfigData []byte
+		if mode == "kubeconfig" {
+			if data, err := os.ReadFile(k8s.DefaultKubeconfigPath()); err == nil {
+				kubeconfigData = data
+			}
+		}
+		if err := mgr.AddStartup(startupName, mode, k8sClient, kubeconfigData, k8sErr); err != nil {
+			logx.Warnf("cluster registry: %v", err)
 		}
 	} else {
 		logx.Infof("SBOM input mode: %s (kubernetes client skipped)", *fromSBOM)
@@ -247,9 +269,8 @@ func runScanCmd(args []string) {
 		ecrProvider = ecr.NewProvider()
 	}
 	var sc *scanner.Scanner
-	if k8sClient != nil || *fromSBOM != "" {
+	if *fromSBOM != "" || k8sErr == nil {
 		sc = scanner.New(scanner.Options{
-			Client:      k8sClient,
 			Namespaces:  namespaces,
 			FromSBOM:    *fromSBOM,
 			ECR:         ecrProvider,
@@ -269,6 +290,7 @@ func runScanCmd(args []string) {
 		Scanner:      sc,
 		SPA:          spaHTML,
 		NamesJSON:    namesJSON,
+		Clusters:     mgr,
 		Mode:         mode,
 		K8sErr:       k8sErr,
 		Insecure:     *insecure,
@@ -387,10 +409,20 @@ func runScanCmd(args []string) {
 	}()
 
 	// 4. Scan loop: scans only start on demand (the "Scan now" button posts
-	//    to /api/scan) or via an explicitly configured --scan-interval.
+	//    to /api/scan) or via an explicitly configured --scan-interval. Each
+	//    run targets the cluster currently selected in the registry.
 	runScan := func() {
 		if sc == nil {
 			return
+		}
+		var client *k8s.Client
+		if *fromSBOM == "" {
+			var err error
+			client, err = mgr.SelectedClient()
+			if err != nil {
+				logx.Warnf("scan skipped: %v", err)
+				return
+			}
 		}
 		if !store.TryStartScan() {
 			logx.Infof("scan already running, skipping trigger")
@@ -398,7 +430,7 @@ func runScanCmd(args []string) {
 		}
 		go func() {
 			defer store.FinishScan()
-			if err := sc.RunOnce(ctx); err != nil && err != context.Canceled {
+			if err := sc.RunOnce(ctx, client); err != nil && err != context.Canceled {
 				logx.Errorf("scan run failed: %v", err)
 				store.SetDBError(err.Error())
 			}
@@ -505,7 +537,6 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		keepSBOM = true
 	}
 	sc := scanner.New(scanner.Options{
-		Client:      k8sClient,
 		Namespaces:  namespaces,
 		FromSBOM:    fromSBOM,
 		Provider:    provider,
@@ -523,7 +554,7 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 	} else {
 		logx.Infof("scanning all cluster images ...")
 	}
-	if err := sc.RunOnce(ctx); err != nil && err != context.Canceled {
+	if err := sc.RunOnce(ctx, k8sClient); err != nil && err != context.Canceled {
 		return err
 	}
 

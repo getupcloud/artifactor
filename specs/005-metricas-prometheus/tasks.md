@@ -17,6 +17,10 @@
 - [x] `deploy/servicemonitor.yaml.tmpl` + flag `install --service-monitor`
       (template condicional, `matchNames` com placeholder de namespace) e
       testes em `install_test.go`
+- [x] `deploy/prometheusrule.yaml.tmpl` (mesma flag): alertas
+      `ArtifactorImageCriticalCVEs`/`ArtifactorImageHighCVEs` sobre
+      `artifactor_image_cve` (`for: 5m`, labels/annotations com workload,
+      namespace, contagem e last_scan) e testes em `install_test.go`
 - [x] AGENTS.md (mapa do repo, referência de CLI, ideias concluídas)
 - [x] `make build`, `go vet ./...`, `go vet -tags integration ./...` e
       `make test`

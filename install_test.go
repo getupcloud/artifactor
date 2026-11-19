@@ -190,21 +190,25 @@ func TestRenderManifestsOpenshift(t *testing.T) {
 }
 
 func TestRenderManifestsServiceMonitor(t *testing.T) {
-	// without --service-monitor the ServiceMonitor is not rendered
+	// without --service-monitor the ServiceMonitor/PrometheusRule are not rendered
 	data, err := renderManifests("", "", "artifactor", "", "", false, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "kind: ServiceMonitor") {
+	text := string(data)
+	if strings.Contains(text, "kind: ServiceMonitor") {
 		t.Error("ServiceMonitor included without --service-monitor")
 	}
+	if strings.Contains(text, "kind: PrometheusRule") {
+		t.Error("PrometheusRule included without --service-monitor")
+	}
 
-	// with --service-monitor it is, and matchNames follows --namespace
+	// with --service-monitor they are, and matchNames follows --namespace
 	data, err = renderManifests("", "", "team-a", "", "", false, true, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
+	text = string(data)
 	for _, want := range []string{
 		"kind: ServiceMonitor",
 		"name: artifactor",
@@ -220,6 +224,19 @@ func TestRenderManifestsServiceMonitor(t *testing.T) {
 	}
 	if strings.Contains(text, "__NAMESPACE__") {
 		t.Error("servicemonitor namespace placeholder not replaced")
+	}
+	for _, want := range []string{
+		"kind: PrometheusRule",
+		"name: artifactor-cves",
+		"namespace: team-a",
+		"alert: ArtifactorImageCriticalCVEs",
+		`artifactor_image_cve{severity="critical"}`,
+		"alert: ArtifactorImageHighCVEs",
+		`artifactor_image_cve{severity="high"}`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("prometheusrule manifest missing %q", want)
+		}
 	}
 }
 
@@ -408,6 +425,9 @@ func TestInstallDump(t *testing.T) {
 	})
 	if !strings.Contains(out, "kind: ServiceMonitor") || !strings.Contains(out, "path: /metrics") {
 		t.Error("install --dump --service-monitor did not include the ServiceMonitor")
+	}
+	if !strings.Contains(out, "kind: PrometheusRule") || !strings.Contains(out, "alert: ArtifactorImageCriticalCVEs") {
+		t.Error("install --dump --service-monitor did not include the PrometheusRule")
 	}
 
 	pemFile := filepath.Join(t.TempDir(), "ca.crt")

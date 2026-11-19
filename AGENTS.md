@@ -60,7 +60,7 @@
   vulnerabilidades nomeadas (fallback embutido, refresh do GitHub).
 - `deploy/` — namespace/SA/RBAC/deployment/service + templates
   (`dbca.yaml.tmpl`, `openshift.yaml.tmpl`, `imagepullsecret.yaml.tmpl`,
-  `servicemonitor.yaml.tmpl`).
+  `servicemonitor.yaml.tmpl`, `prometheusrule.yaml.tmpl`).
 - `.goreleaser.yaml`, `Makefile`, `Dockerfile` (imagem de produção),
   `Dockerfile.session` (container de sessão: `make build-session`),
   `SESSION.md` (bootstrap de sessão — aponta para este arquivo),
@@ -155,8 +155,10 @@
 - `install`: `--dump`, `--dry-run`, `--image`, `--image-pull-policy`,
   `--namespace`, `--customer-name`/`--cluster-name` (env do deployment),
   `--openshift` (SCC+RBAC), `--service-monitor` (ServiceMonitor do
-  Prometheus Operator apontando para a porta `metrics` 9090 — requer os
-  CRDs `monitoring.coreos.com`), `--db-ca-cert` (ConfigMap + mount),
+  Prometheus Operator apontando para a porta `metrics` 9090 + PrometheusRule
+  com alertas `ArtifactorImageCriticalCVEs`/`ArtifactorImageHighCVEs` sobre
+  `artifactor_image_cve` — requer os CRDs `monitoring.coreos.com`),
+  `--db-ca-cert` (ConfigMap + mount),
   `--image-token-env[=VAR]` (imagePullSecret do ghcr.io a partir de GH_TOKEN
   ou GITHUB_TOKEN).
 - Atualização: no início do `scan` (fora do pod), verifica o último release

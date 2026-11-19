@@ -22,8 +22,8 @@ import (
 // works from any host without the repository checked out. The .yaml.tmpl
 // templates are included only when their flag is given (imagepullsecret:
 // --image-token-env; openshift: --openshift; dbca: --db-ca-cert;
-// servicemonitor: --service-monitor); the .tmpl extension also keeps a
-// plain `kubectl apply -f deploy/` from applying them.
+// servicemonitor + prometheusrule: --service-monitor); the .tmpl extension
+// also keeps a plain `kubectl apply -f deploy/` from applying them.
 //
 //go:embed deploy/*.yaml deploy/*.yaml.tmpl
 var manifestsFS embed.FS
@@ -35,6 +35,7 @@ const (
 	dbcaTemplateName           = "dbca.yaml.tmpl"
 	caBundlePlaceholder        = "__CA_BUNDLE__"
 	serviceMonitorTemplateName = "servicemonitor.yaml.tmpl"
+	prometheusRuleTemplateName = "prometheusrule.yaml.tmpl"
 	namespacePlaceholder       = "__NAMESPACE__"
 	// The CA ConfigMap is mounted as a directory; the ca.crt key becomes
 	// dbCaCertMountPath, which DB_CA_CERT points to.
@@ -179,6 +180,10 @@ func renderManifests(image, secretData, namespace, customerName, clusterName str
 				continue
 			}
 			data = bytes.ReplaceAll(data, []byte(namespacePlaceholder), []byte(namespace))
+		case prometheusRuleTemplateName:
+			if !serviceMonitor {
+				continue
+			}
 		case "deployment.yaml":
 			if image != "" {
 				data = deploymentImagePattern.ReplaceAll(data, []byte("${1}"+image))
@@ -221,7 +226,7 @@ func runInstallCmd(action string, args []string) {
 	customerName := fs.String("customer-name", "", "set the CUSTOMER_NAME env of the deployment (shown in the execution logs and report title)")
 	clusterName := fs.String("cluster-name", "", "set the CLUSTER_NAME env of the deployment (shown in the execution logs and report title)")
 	openshift := fs.Bool("openshift", false, "include the OpenShift/OKD SecurityContextConstraints + RBAC manifests (requires cluster-admin to apply)")
-	serviceMonitor := fs.Bool("service-monitor", false, "include the Prometheus Operator ServiceMonitor manifest so Prometheus scrapes the /metrics endpoint (requires the monitoring.coreos.com CRDs)")
+	serviceMonitor := fs.Bool("service-monitor", false, "include the Prometheus Operator ServiceMonitor and PrometheusRule manifests: Prometheus scrapes the /metrics endpoint and alerts on images with high/critical CVEs (requires the monitoring.coreos.com CRDs)")
 	dbCaCert := fs.String("db-ca-cert", "", "read the grype DB server CA certificate from this PEM file, embed it as a ConfigMap, and configure the deployment to trust it")
 	logLevel := fs.String("log-level", os.Getenv("LOG_LEVEL"), "log verbosity: debug, info, warn or err (default info)")
 	imageTokenEnv := fs.String("image-token-env", "", "read a registry token from this environment variable (default: GH_TOKEN, then GITHUB_TOKEN) and include the artifactor-docker-image-token imagePullSecret manifest")

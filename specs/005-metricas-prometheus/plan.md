@@ -69,6 +69,12 @@ sem a lib). Escapamento e formatação cobertos por testes golden.
   `monitoring.coreos.com` pode não existir no cluster (aplicar sem o
   operator quebraria o `install`). O placeholder `__NAMESPACE__` do
   `matchNames` segue o `--namespace`.
+- `prometheusrule.yaml.tmpl` (novo, mesma flag): PrometheusRule
+  `artifactor-cves` com os alertas `ArtifactorImageCriticalCVEs` e
+  `ArtifactorImageHighCVEs` — `sum by (image, tag, namespace, kind,
+  object, last_scan) (artifactor_image_cve{severity="critical"|"high"})
+  > 0`, `for: 5m`, label de rota `severity` e annotations com o workload,
+  o namespace, o número de CVEs e o `last_scan`.
 
 ## Riscos
 

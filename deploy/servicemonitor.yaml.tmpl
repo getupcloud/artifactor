@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: artifactor
+  namespace: artifactor
+  labels:
+    app: artifactor
+spec:
+  selector:
+    matchLabels:
+      app: artifactor
+  namespaceSelector:
+    matchNames:
+      - __NAMESPACE__
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 60s

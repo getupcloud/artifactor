@@ -45,6 +45,10 @@
   endpoints `/api/clusters` (list/add/remove/select/context) e
   `/api/scan/cancel` (cancela o scan em andamento; imagens "scanning"
   voltam a "queued").
+- `internal/metrics/` — endpoint Prometheus `GET /metrics` em listen separado
+  (text exposition, sem lib externa): `artifactor_image_status` (uma série
+  por imagem: labels image/tag/status/last_scan) e `artifactor_image_cve`
+  (uma série por CVE: cve/severity), renderizadas do Store a cada scrape.
 - `internal/registryauth/` — parsing de docker config, extração de authority.
 - `internal/ecr/` — cadeia de credenciais AWS (IRSA) para ECR.
 - `internal/logx/` — logger nivelado; toda linha carrega `arquivo:linha` do
@@ -52,7 +56,8 @@
 - `web/index.html` — SPA (go:embed); `web/names.json` — lista de
   vulnerabilidades nomeadas (fallback embutido, refresh do GitHub).
 - `deploy/` — namespace/SA/RBAC/deployment/service + templates
-  (`dbca.yaml.tmpl`, `openshift.yaml.tmpl`, `imagepullsecret.yaml.tmpl`).
+  (`dbca.yaml.tmpl`, `openshift.yaml.tmpl`, `imagepullsecret.yaml.tmpl`,
+  `servicemonitor.yaml.tmpl`).
 - `.goreleaser.yaml`, `Makefile`, `Dockerfile` (imagem de produção),
   `Dockerfile.session` (container de sessão: `make build-session`),
   `SESSION.md` (bootstrap de sessão — aponta para este arquivo),
@@ -146,7 +151,9 @@
   arquivo do pod para stdout).
 - `install`: `--dump`, `--dry-run`, `--image`, `--image-pull-policy`,
   `--namespace`, `--customer-name`/`--cluster-name` (env do deployment),
-  `--openshift` (SCC+RBAC), `--db-ca-cert` (ConfigMap + mount),
+  `--openshift` (SCC+RBAC), `--service-monitor` (ServiceMonitor do
+  Prometheus Operator apontando para a porta `metrics` 9090 — requer os
+  CRDs `monitoring.coreos.com`), `--db-ca-cert` (ConfigMap + mount),
   `--image-token-env[=VAR]` (imagePullSecret do ghcr.io a partir de GH_TOKEN
   ou GITHUB_TOKEN).
 - Atualização: no início do `scan` (fora do pod), verifica o último release
@@ -161,6 +168,13 @@
   start); skips: `--no-open-browser` (env `NO_OPEN_BROWSER`), pod
   (`KUBERNETES_SERVICE_HOST`) e execuções sem TTY no stdin; falha vira
   aviso com a URL para abrir manualmente.
+- `--metrics-listen <[ip][:porta]>` (env `METRICS_LISTEN`) — endereço do
+  endpoint Prometheus `GET /metrics` (IP e porta opcionais; defaults
+  `0.0.0.0:9090`; aceita `ip`, `:porta`, `porta`, `ip:porta`, `[ipv6]`,
+  `[ipv6]:porta` e IPv6 nu); servidor separado do SPA, só no caminho que
+  serve HTTP (nunca em `--in-cluster`/exports); porta inválida é fatal no
+  startup; bind falho vira aviso e o scan segue (o deployment expõe a porta
+  9090 como `metrics` no Service).
 - `--help`/`-h`/`help` na raiz lista os subcomandos.
 
 ## 6. Banco de vulnerabilidades do grype — conhecimento crítico
@@ -262,4 +276,5 @@
   [customer/cluster], --openshift, --image-pull-policy, download direto do
   DB, política fail-fast do DB, formato de log com arquivo:linha, check de
   atualização de versão no início do scan, gerenciamento de clusters no SPA,
-  cancelamento do scan pela UI, auto-open do SPA no navegador.)
+  cancelamento do scan pela UI, auto-open do SPA no navegador, métricas
+  Prometheus em `--metrics-listen` 0.0.0.0:9090.)

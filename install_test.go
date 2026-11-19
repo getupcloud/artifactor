@@ -12,7 +12,7 @@ import (
 )
 
 func TestRenderManifests(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "", "", false, "", false, "")
+	data, err := renderManifests("", "", "artifactor", "", "", false, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestRenderManifests(t *testing.T) {
 }
 
 func TestRenderManifestsNamespace(t *testing.T) {
-	data, err := renderManifests("", "", "team-a", "", "", false, "", false, "")
+	data, err := renderManifests("", "", "team-a", "", "", false, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestRenderManifestsNamespace(t *testing.T) {
 }
 
 func TestRenderManifestsSkipNamespace(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "", "", false, "", true, "")
+	data, err := renderManifests("", "", "artifactor", "", "", false, false, "", true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestRenderManifestsSkipNamespace(t *testing.T) {
 }
 
 func TestRenderManifestsImageOverride(t *testing.T) {
-	data, err := renderManifests("registry.example.com/team/artifactor:v9", "", "artifactor", "", "", false, "", false, "")
+	data, err := renderManifests("registry.example.com/team/artifactor:v9", "", "artifactor", "", "", false, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestRenderManifestsImageOverride(t *testing.T) {
 }
 
 func TestRenderManifestsImagePullPolicyOverride(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "", "", false, "", false, "Always")
+	data, err := renderManifests("", "", "artifactor", "", "", false, false, "", false, "Always")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestRenderManifestsImagePullPolicyOverride(t *testing.T) {
 	}
 
 	// empty value keeps the manifest value untouched
-	data, err = renderManifests("", "", "artifactor", "", "", false, "", false, "")
+	data, err = renderManifests("", "", "artifactor", "", "", false, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestRenderManifestsImagePullPolicyOverride(t *testing.T) {
 }
 
 func TestRenderManifestsNamesEnv(t *testing.T) {
-	data, err := renderManifests("", "", "artifactor", "Acme Corp", "prod-eks", false, "", false, "")
+	data, err := renderManifests("", "", "artifactor", "Acme Corp", "prod-eks", false, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 	}
 
 	// unset flags leave the manifest defaults alone
-	data, err = renderManifests("", "", "artifactor", "", "", false, "", false, "")
+	data, err = renderManifests("", "", "artifactor", "", "", false, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 	}
 
 	// quotes and backslashes in the value are escaped
-	data, err = renderManifests("", "", "artifactor", `Acme "X"\Y`, "", false, "", false, "")
+	data, err = renderManifests("", "", "artifactor", `Acme "X"\Y`, "", false, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestRenderManifestsNamesEnv(t *testing.T) {
 
 func TestRenderManifestsOpenshift(t *testing.T) {
 	// without --openshift the SCC manifests are not rendered
-	data, err := renderManifests("", "", "artifactor", "", "", false, "", false, "")
+	data, err := renderManifests("", "", "artifactor", "", "", false, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestRenderManifestsOpenshift(t *testing.T) {
 	}
 
 	// with --openshift they are, and the subject namespace follows --namespace
-	data, err = renderManifests("", "", "team-a", "", "", true, "", false, "")
+	data, err = renderManifests("", "", "team-a", "", "", true, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,10 +189,44 @@ func TestRenderManifestsOpenshift(t *testing.T) {
 	}
 }
 
+func TestRenderManifestsServiceMonitor(t *testing.T) {
+	// without --service-monitor the ServiceMonitor is not rendered
+	data, err := renderManifests("", "", "artifactor", "", "", false, false, "", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "kind: ServiceMonitor") {
+		t.Error("ServiceMonitor included without --service-monitor")
+	}
+
+	// with --service-monitor it is, and matchNames follows --namespace
+	data, err = renderManifests("", "", "team-a", "", "", false, true, "", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"kind: ServiceMonitor",
+		"name: artifactor",
+		"namespace: team-a",
+		"port: metrics",
+		"path: /metrics",
+		"matchNames:",
+		"- team-a",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("servicemonitor manifest missing %q", want)
+		}
+	}
+	if strings.Contains(text, "__NAMESPACE__") {
+		t.Error("servicemonitor namespace placeholder not replaced")
+	}
+}
+
 func TestRenderManifestsDBCACert(t *testing.T) {
 	// without the CA data the ConfigMap is not rendered and the deployment
 	// keeps the empty DB_CA_CERT env
-	data, err := renderManifests("", "", "artifactor", "", "", false, "", false, "")
+	data, err := renderManifests("", "", "artifactor", "", "", false, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +235,7 @@ func TestRenderManifestsDBCACert(t *testing.T) {
 	}
 
 	pem := "-----BEGIN CERTIFICATE-----\nMIIBfakecert\n-----END CERTIFICATE-----"
-	data, err = renderManifests("", "", "team-a", "", "", false, pem, false, "")
+	data, err = renderManifests("", "", "team-a", "", "", false, false, pem, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +331,7 @@ func TestRenderManifestsWithSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := renderManifests("", secretData, "artifactor", "", "", false, "", false, "")
+	data, err := renderManifests("", secretData, "artifactor", "", "", false, false, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,6 +401,13 @@ func TestInstallDump(t *testing.T) {
 	})
 	if !strings.Contains(out, "kind: SecurityContextConstraints") || !strings.Contains(out, "name: artifactor-scc") {
 		t.Error("install --dump --openshift did not include the SCC manifests")
+	}
+
+	out = captureStdout(t, func() {
+		runInstallCmd("install", []string{"--dump", "--service-monitor"})
+	})
+	if !strings.Contains(out, "kind: ServiceMonitor") || !strings.Contains(out, "path: /metrics") {
+		t.Error("install --dump --service-monitor did not include the ServiceMonitor")
 	}
 
 	pemFile := filepath.Join(t.TempDir(), "ca.crt")

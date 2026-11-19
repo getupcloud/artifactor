@@ -29,6 +29,7 @@ import (
 	"github.com/getupcloud/artifactor/internal/ecr"
 	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/logx"
+	"github.com/getupcloud/artifactor/internal/metrics"
 	"github.com/getupcloud/artifactor/internal/scanner"
 	"github.com/getupcloud/artifactor/internal/selfupdate"
 )
@@ -90,43 +91,44 @@ func printMainUsage() {
 func runScanCmd(args []string) {
 	fs := flag.NewFlagSet("artifactor scan", flag.ExitOnError)
 	var (
-		port            = fs.Int("port", envInt("PORT", 8080), "HTTP listen port")
-		namespaceCSV    = fs.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in these namespaces (comma-separated list; empty = all namespaces)")
-		interval        = fs.Duration("scan-interval", envDuration("SCAN_INTERVAL", 0), "automatic rescan interval (0 disables)")
-		concurrency     = fs.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
-		dbDir           = fs.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
-		dbUpdate        = fs.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")
-		dbCaCert        = fs.String("db-ca-cert", envStr("DB_CA_CERT", ""), "path to a PEM CA certificate used to verify the grype DB download server (instead of the system roots)")
-		dbDirect        = fs.Bool("grype-db-direct-download", envBool("GRYPE_DB_DIRECT_DOWNLOAD", false), "download the grype vulnerability DB and its metadata directly over HTTP(S), without the grype download library (honors --insecure-skip-tls and --db-ca-cert)")
-		ignoreDB        = fs.Bool("ignore-grype-db-unavailable", envBool("IGNORE_GRYPE_DB_UNAVAILABLE", false), "keep serving when the grype vulnerability DB is unavailable and cannot be downloaded (scans will fail until it is available; without this flag artifactor exits)")
-		inCluster       = fs.Bool("in-cluster", envBool("IN_CLUSTER", false), "run the scan inside the cluster in a temporary pod with the same parameters (requires --export <dir>); the report is packed as a .tar.gz inside the pod, downloaded via the Kubernetes API and extracted locally")
-		inClusterForce  = fs.Bool("in-cluster-force", envBool("IN_CLUSTER_FORCE", false), "with --in-cluster: overwrite existing scan resources and remove them afterwards without asking")
-		inClusterKeep   = fs.Bool("in-cluster-keep", envBool("IN_CLUSTER_KEEP", false), "with --in-cluster: keep the created scan resources (pod and CA ConfigMap) after the run and print the kubectl command to remove them manually")
-		inClusterImage  = fs.String("in-cluster-image", envStr("IN_CLUSTER_IMAGE", ""), "container image for the in-cluster scan pod (default: the image of the artifactor deployment manifest)")
-		imagePullPolicy = fs.String("image-pull-policy", envStr("IMAGE_PULL_POLICY", "IfNotPresent"), "imagePullPolicy of the in-cluster scan pod (Always, IfNotPresent or Never)")
+		port               = fs.Int("port", envInt("PORT", 8080), "HTTP listen port")
+		metricsListen      = fs.String("metrics-listen", envStr("METRICS_LISTEN", ""), "listen address of the Prometheus metrics endpoint (GET /metrics): [ip][:port], both optional (defaults 0.0.0.0:9090)")
+		namespaceCSV       = fs.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in these namespaces (comma-separated list; empty = all namespaces)")
+		interval           = fs.Duration("scan-interval", envDuration("SCAN_INTERVAL", 0), "automatic rescan interval (0 disables)")
+		concurrency        = fs.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
+		dbDir              = fs.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
+		dbUpdate           = fs.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")
+		dbCaCert           = fs.String("db-ca-cert", envStr("DB_CA_CERT", ""), "path to a PEM CA certificate used to verify the grype DB download server (instead of the system roots)")
+		dbDirect           = fs.Bool("grype-db-direct-download", envBool("GRYPE_DB_DIRECT_DOWNLOAD", false), "download the grype vulnerability DB and its metadata directly over HTTP(S), without the grype download library (honors --insecure-skip-tls and --db-ca-cert)")
+		ignoreDB           = fs.Bool("ignore-grype-db-unavailable", envBool("IGNORE_GRYPE_DB_UNAVAILABLE", false), "keep serving when the grype vulnerability DB is unavailable and cannot be downloaded (scans will fail until it is available; without this flag artifactor exits)")
+		inCluster          = fs.Bool("in-cluster", envBool("IN_CLUSTER", false), "run the scan inside the cluster in a temporary pod with the same parameters (requires --export <dir>); the report is packed as a .tar.gz inside the pod, downloaded via the Kubernetes API and extracted locally")
+		inClusterForce     = fs.Bool("in-cluster-force", envBool("IN_CLUSTER_FORCE", false), "with --in-cluster: overwrite existing scan resources and remove them afterwards without asking")
+		inClusterKeep      = fs.Bool("in-cluster-keep", envBool("IN_CLUSTER_KEEP", false), "with --in-cluster: keep the created scan resources (pod and CA ConfigMap) after the run and print the kubectl command to remove them manually")
+		inClusterImage     = fs.String("in-cluster-image", envStr("IN_CLUSTER_IMAGE", ""), "container image for the in-cluster scan pod (default: the image of the artifactor deployment manifest)")
+		imagePullPolicy    = fs.String("image-pull-policy", envStr("IMAGE_PULL_POLICY", "IfNotPresent"), "imagePullPolicy of the in-cluster scan pod (Always, IfNotPresent or Never)")
 		inClusterResources = fs.String("in-cluster-resources", envStr("IN_CLUSTER_RESOURCES", ""), "container resources of the in-cluster scan pod (comma-separated \"(requests|limits).(memory|cpu)=<quantity>\" entries overriding the defaults requests.cpu=100m,requests.memory=256Mi,limits.cpu=2,limits.memory=4Gi)")
-		openshift       = fs.Bool("openshift", envBool("OPENSHIFT", false), "with --in-cluster: apply the OpenShift/OKD SecurityContextConstraints + RBAC manifests for the scan pod (requires cluster-admin)")
-		exportTar       = fs.String("export-tar", "", "internal: create a .tar.gz of the export directory at this path (used by the in-cluster scan pod)")
-		hold            = fs.Bool("hold", false, "internal: keep the container alive after the export completes (used by the in-cluster scan pod)")
-		fromSBOM        = fs.String("from-sbom", envStr("FROM_SBOM", ""), "scan an SBOM file or all files of a directory (non-recursive) with grype only, skipping syft and image download")
-		dbRefresh       = fs.Duration("db-refresh-interval", envDuration("DB_REFRESH_INTERVAL", 24*time.Hour), "check for grype DB updates on this interval while running (0 disables)")
-		platform        = fs.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
-		scanTimeout     = fs.Duration("scan-timeout", envDuration("SCAN_TIMEOUT", 15*time.Minute), "per-image scan timeout")
-		exportHTML      = fs.String("export-html", envStr("EXPORT_HTML", ""), "run a scan, export the report as a single self-contained HTML file to this path, and exit")
-		exportSBOM      = fs.String("export-sbom", envStr("EXPORT_SBOM", ""), "run a scan, export one syft SBOM (syft-json) per image into this directory, and exit")
-		exportGrype     = fs.String("export-grype", envStr("EXPORT_GRYPE", ""), "run a scan, export one grype JSON report per image into this directory, and exit")
-		exportAll       = fs.String("export", envStr("EXPORT", ""), "run a scan, export the full report (scan.html + sbom/ + grype/) into this directory, and exit")
-		exportCSV       = fs.String("export-csv", envStr("EXPORT_CSV", ""), "run a scan, export the CVE report as CSV to this file, and exit")
-		openReport      = fs.String("open", envStr("OPEN", ""), "open the exported scan.html with this command after --export (default \"xdg-open\"; ${FILE} is replaced by the path)")
-		ecrAuth         = fs.Bool("ecr-auth", envBool("ECR_AUTH", true), "authenticate to AWS ECR registries via the AWS credential chain (IRSA) when no pull secret matches")
-		keepSBOM        = fs.Bool("keep-sbom", envBool("KEEP_SBOM", true), "keep the syft SBOM of each image in memory (needed by --export-sbom; disable to save memory)")
-		insecure        = fs.Bool("insecure-skip-tls", envBool("INSECURE_SKIP_TLS", false), "skip TLS certificate verification for remote servers (image registries, the vulnerability-name refresh and direct grype DB downloads)")
-		customerName    = fs.String("customer-name", os.Getenv("CUSTOMER_NAME"), "customer name shown in the execution logs and report title")
-		clusterName     = fs.String("cluster-name", os.Getenv("CLUSTER_NAME"), "cluster name shown in the execution logs and report title")
-		logLevel        = fs.String("log-level", envStr("LOG_LEVEL", "info"), "log verbosity: debug, info, warn or err")
-		noCheckUpdate   = fs.Bool("no-check-update-version", envBool("NO_CHECK_UPDATE_VERSION", false), "skip the startup check for a newer artifactor release on GitHub")
-		noOpenBrowser   = fs.Bool("no-open-browser", envBool("NO_OPEN_BROWSER", false), "do not open the web UI in the default browser when the local server starts")
-		showVersion     = fs.Bool("version", false, "print version and exit")
+		openshift          = fs.Bool("openshift", envBool("OPENSHIFT", false), "with --in-cluster: apply the OpenShift/OKD SecurityContextConstraints + RBAC manifests for the scan pod (requires cluster-admin)")
+		exportTar          = fs.String("export-tar", "", "internal: create a .tar.gz of the export directory at this path (used by the in-cluster scan pod)")
+		hold               = fs.Bool("hold", false, "internal: keep the container alive after the export completes (used by the in-cluster scan pod)")
+		fromSBOM           = fs.String("from-sbom", envStr("FROM_SBOM", ""), "scan an SBOM file or all files of a directory (non-recursive) with grype only, skipping syft and image download")
+		dbRefresh          = fs.Duration("db-refresh-interval", envDuration("DB_REFRESH_INTERVAL", 24*time.Hour), "check for grype DB updates on this interval while running (0 disables)")
+		platform           = fs.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
+		scanTimeout        = fs.Duration("scan-timeout", envDuration("SCAN_TIMEOUT", 15*time.Minute), "per-image scan timeout")
+		exportHTML         = fs.String("export-html", envStr("EXPORT_HTML", ""), "run a scan, export the report as a single self-contained HTML file to this path, and exit")
+		exportSBOM         = fs.String("export-sbom", envStr("EXPORT_SBOM", ""), "run a scan, export one syft SBOM (syft-json) per image into this directory, and exit")
+		exportGrype        = fs.String("export-grype", envStr("EXPORT_GRYPE", ""), "run a scan, export one grype JSON report per image into this directory, and exit")
+		exportAll          = fs.String("export", envStr("EXPORT", ""), "run a scan, export the full report (scan.html + sbom/ + grype/) into this directory, and exit")
+		exportCSV          = fs.String("export-csv", envStr("EXPORT_CSV", ""), "run a scan, export the CVE report as CSV to this file, and exit")
+		openReport         = fs.String("open", envStr("OPEN", ""), "open the exported scan.html with this command after --export (default \"xdg-open\"; ${FILE} is replaced by the path)")
+		ecrAuth            = fs.Bool("ecr-auth", envBool("ECR_AUTH", true), "authenticate to AWS ECR registries via the AWS credential chain (IRSA) when no pull secret matches")
+		keepSBOM           = fs.Bool("keep-sbom", envBool("KEEP_SBOM", true), "keep the syft SBOM of each image in memory (needed by --export-sbom; disable to save memory)")
+		insecure           = fs.Bool("insecure-skip-tls", envBool("INSECURE_SKIP_TLS", false), "skip TLS certificate verification for remote servers (image registries, the vulnerability-name refresh and direct grype DB downloads)")
+		customerName       = fs.String("customer-name", os.Getenv("CUSTOMER_NAME"), "customer name shown in the execution logs and report title")
+		clusterName        = fs.String("cluster-name", os.Getenv("CLUSTER_NAME"), "cluster name shown in the execution logs and report title")
+		logLevel           = fs.String("log-level", envStr("LOG_LEVEL", "info"), "log verbosity: debug, info, warn or err")
+		noCheckUpdate      = fs.Bool("no-check-update-version", envBool("NO_CHECK_UPDATE_VERSION", false), "skip the startup check for a newer artifactor release on GitHub")
+		noOpenBrowser      = fs.Bool("no-open-browser", envBool("NO_OPEN_BROWSER", false), "do not open the web UI in the default browser when the local server starts")
+		showVersion        = fs.Bool("version", false, "print version and exit")
 	)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: artifactor scan [flags]\n\nFlags:\n")
@@ -154,6 +156,11 @@ func runScanCmd(args []string) {
 
 	if _, err := parseImagePullPolicy(*imagePullPolicy); err != nil {
 		fatalf("--image-pull-policy: %v", err)
+	}
+
+	metricsAddr, err := metrics.ParseListen(*metricsListen)
+	if err != nil {
+		fatalf("--metrics-listen: %v", err)
 	}
 
 	resources, err := parsePodResources(*inClusterResources)
@@ -316,6 +323,21 @@ func runScanCmd(args []string) {
 		}
 	}()
 
+	// Prometheus metrics on a dedicated listen address (--metrics-listen,
+	// defaults 0.0.0.0:9090). A bind failure must not take the SPA down:
+	// warn and continue without metrics.
+	metricsServer := &http.Server{
+		Addr:              metricsAddr,
+		Handler:           metrics.New(store),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		logx.Infof("metrics listening on http://%s/metrics", metricsAddr)
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logx.Warnf("metrics server: %v (Prometheus metrics will be unavailable)", err)
+		}
+	}()
+
 	maybeOpenBrowser(*port, *noOpenBrowser)
 
 	// Refresh the named vulnerabilities list from the GitHub repository at
@@ -455,6 +477,7 @@ func runScanCmd(args []string) {
 			logx.Infof("shutting down ...")
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			_ = httpServer.Shutdown(shutdownCtx)
+			_ = metricsServer.Shutdown(shutdownCtx)
 			cancel()
 			return
 		case <-tickerCh:

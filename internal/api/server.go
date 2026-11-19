@@ -60,6 +60,10 @@ type Options struct {
 	ClusterName  string
 	K8sErr       error
 	DB           func() scanner.DBStatus // dynamic DB status (DB initializes in the background)
+	// AccessLog logs one line per request (the SPA and API access log).
+	// Off by default so the package tests stay quiet; the real server
+	// enables it.
+	AccessLog bool
 }
 
 // Server implements the HTTP API.
@@ -150,7 +154,62 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/scan", s.handleScan)
 	mux.HandleFunc("POST /api/scan/cancel", s.handleCancelScan)
 	mux.HandleFunc("GET /", s.handleSPA)
+	if s.opts.AccessLog {
+		return AccessLog(mux)
+	}
 	return mux
+}
+
+// AccessLog wraps next with a middleware that logs one line per request
+// after it completes: "http: <method> <path> <status> <duration> <bytes>B
+// <remote>". GET /healthz (Kubernetes readiness/liveness probes) is skipped
+// to keep the log clean. The metrics server reuses this middleware for its
+// scrapes.
+func AccessLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+		logx.Infof("http: %s %s %d %s %dB %s",
+			r.Method, r.URL.Path, rec.status, formatLatency(time.Since(start)), rec.bytes, r.RemoteAddr)
+	})
+}
+
+// statusRecorder captures the effective response status and the number of
+// bytes written while passing everything through to the real writer.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	if r.status == 0 {
+		r.status = status
+	}
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	n, err := r.ResponseWriter.Write(b)
+	r.bytes += n
+	return n, err
+}
+
+// formatLatency renders a request duration: milliseconds, or microseconds
+// when shorter than one millisecond.
+func formatLatency(d time.Duration) string {
+	if d < time.Millisecond {
+		return fmt.Sprintf("%dµs", d.Microseconds())
+	}
+	return d.Round(time.Millisecond).String()
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

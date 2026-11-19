@@ -227,6 +227,10 @@
   — `arquivo:linha` é o path do chamador relativo ao repo (arquivos fora do
   repo, ex. lib grype, mostram os dois últimos componentes do path).
   Mensagens fatais do pacote main passam por `fatalf()` (mesmo formato).
+- **Access log**: uma linha por request nos servidores HTTP (SPA/API e
+  métricas) — `http: <método> <path> <status> <duração> <bytes>B <remote>`
+  — via middleware `api.AccessLog` (status/bytes capturados por writer
+  wrapper, duração em ms/µs); `GET /healthz` (probes do K8s) é pulado.
 - Mensagens de commit: resumo curto imperativo em inglês + corpo;
   trailer `Co-Authored-By` no final (veja o git log).
 - NÃO sobrescrever a identidade git repo-local (Mateus Caruccio
@@ -281,4 +285,6 @@
   atualização de versão no início do scan, gerenciamento de clusters no SPA,
   cancelamento do scan pela UI, auto-open do SPA no navegador, métricas
   Prometheus em `--metrics-listen` 0.0.0.0:9090, status line
-  "Atualizando DB de vulnerabilidades" no SPA (`db.updating` no status).)
+  "Atualizando DB de vulnerabilidades" no SPA (`db.updating` no status),
+  erros de conexão com o backend na mesma status line do SPA, access log
+  dos servidores HTTP (SPA, API e métricas).)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1054,5 +1055,50 @@ func TestStatusEndpoint(t *testing.T) {
 	db = status["db"].(map[string]any)
 	if db["updating"] != true {
 		t.Errorf("db updating = %v, want true", db["updating"])
+	}
+}
+
+func TestAccessLog(t *testing.T) {
+	h := AccessLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ok" {
+			_, _ = w.Write([]byte("hello"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(old)
+
+	// a normal response logs method, path, status 200 and the bytes written
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ok", nil))
+	// a 404 is logged with its status
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/missing", nil))
+	// healthz (Kubernetes probes) is skipped
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	out := buf.String()
+	for _, want := range []string{
+		"http: GET /ok 200",
+		"5B ",
+		"http: POST /api/missing 404",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("access log missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "/healthz") {
+		t.Errorf("healthz must not be logged, got:\n%s", out)
+	}
+	if strings.Count(out, "http: ") != 2 {
+		t.Errorf("access log lines = %d, want 2:\n%s", strings.Count(out, "http: "), out)
+	}
+
+	// the response reaches the client untouched
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ok", nil))
+	if rec.Body.String() != "hello" || rec.Code != http.StatusOK {
+		t.Errorf("response = %d %q, want 200 \"hello\"", rec.Code, rec.Body.String())
 	}
 }

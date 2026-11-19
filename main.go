@@ -309,6 +309,7 @@ func runScanCmd(args []string) {
 			defer dbMu.RUnlock()
 			return dbStatus
 		},
+		AccessLog: true,
 	})
 
 	httpServer := &http.Server{
@@ -328,7 +329,7 @@ func runScanCmd(args []string) {
 	// warn and continue without metrics.
 	metricsServer := &http.Server{
 		Addr:              metricsAddr,
-		Handler:           metrics.New(store),
+		Handler:           api.AccessLog(metrics.New(store)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

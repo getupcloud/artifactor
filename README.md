@@ -1,42 +1,42 @@
 # Artifactor
 
-Web app (Pod + Service no Kubernetes) que escaneia **todas as imagens de contêiner rodando no cluster** em busca de CVEs, usando **syft** e **grype como bibliotecas Go embutidas** (nenhum binário externo é instalado) e o **client-go oficial** para falar com a API do cluster via `kubernetes.default.svc`.
+Web app (Pod + Service on Kubernetes) that scans **all container images running in the cluster** for CVEs, using **syft** and **grype as embedded Go libraries** (no external binary is installed) and the **official client-go** to talk to the cluster API through `kubernetes.default.svc`.
 
-O resultado é apresentado em uma **SPA** (Single-Page Application) que permite filtrar os CVEs pelos **nomes dos artefatos (pacotes) encontrados pelo syft**, por severidade e por ID de CVE.
+Results are presented in a **SPA** (Single-Page Application) that lets you filter CVEs by the **artifact (package) names found by syft**, by severity and by CVE ID.
 
 > [!IMPORTANT]
-> O comando deve ser executado a partir de um local que tenha acesso tanto a API do cluster através do `kubeconfig`, quanto dos `registros de imagens` de containers que executam no cluster.
-> As credenciais de cada registro são coletadas durante a execução, baseado no campo `imagePullSecrets` de cada Pod, ou através de `IRSA` para clusters EKS.
+> The command must run from a machine that can reach both the cluster API (through the `kubeconfig`) and the **container image registries** of the images running in the cluster.
+> Credentials for each registry are collected at runtime from the `imagePullSecrets` field of each Pod, or through `IRSA` on EKS clusters.
 
 ## TL;DR;
 
-Baixe o ultimo binário em [release](https://github.com/getupcloud/artifactor/releases) e execute o scan:
+Download the latest binary from the [release](https://github.com/getupcloud/artifactor/releases) page and run the scan:
 
 ```
 $ wget https://github.com/getupcloud/artifactor/releases/download/v0.4.5/artifactor_0.4.5_linux_amd64.tar.gz
 $ tar xzvf artifactor_0.4.5_linux_amd64.tar.gz artifactor
 
-## Para rodar localmente (seu host precisa acessar os repositorios de imagens)
+## To run locally (your host must reach the image registries)
 $ ./artifactor scan --export my-cluster
 
-## Para rodar em um POD no cluster - o relatório é transferido para seu host local
+## To run in a Pod inside the cluster - the report is transferred to your local host
 $ ./artifactor scan --export my-cluster --in-cluster
 
-## Abr o relatório local
+## Open the local report
 $ xdg-open my-cluster/scan.html
 ```
 
 > [!TIP]
-> Se o chrome estiver quebrando, use o firefox. Relatórios grandes (>=1GB total) podem não ser carregados devidamente no chrome.
-> Outra opção é fazer o scan limitado a um ou mais namespaces usando a flag `--namespace ns1,ns2,...`.
+> If Chrome is misbehaving, use Firefox. Large reports (>=1GB total) may not load properly in Chrome.
+> Another option is to limit the scan to one or more namespaces with the `--namespace ns1,ns2,...` flag.
 
-O diretorio `my-cluster` é criado com o relatorio estático e auto-contido do scan completo. Basta abrir o arquivo `scan.html` gerado.
-Os arquivos usados na análise também estão disponíveis nos diretórios `sbom/` e `grype/`.
+The `my-cluster` directory is created with the static, self-contained report of the full scan. Just open the generated `scan.html` file.
+The files used in the analysis are also available in the `sbom/` and `grype/` directories.
 
 > [!TIP]
-> Arquivos SBOM podem ser usados posteriormente para scan usando diretamente o grype com o comando `grype path/to/file.sbom`.
+> SBOM files can later be used for scanning directly with grype: `grype path/to/file.sbom`.
 
-Abaixo está a arvore de arquivos criadas com o scan apenas dos namespaces `flux-system` e `metallb-system`:
+Below is the file tree created by scanning only the `flux-system` and `metallb-system` namespaces:
 
 ```
 $ ./artifactor --namespace flux-system,metallb-system --export my-cluster
@@ -69,160 +69,176 @@ my-cluster/
 3 directories, 21 files
 ```
 
-## Como funciona
+## How it works
 
-1. **Descoberta (client-go)**: lista os Pods de todos os namespaces e coleta as imagens de `containers`, `initContainers` e `ephemeralContainers`, registrando também o **namespace e o controller** (Deployment/StatefulSet/DaemonSet/Job…) dono de cada Pod (via ownerReferences + ReplicaSets).
-2. **imagePullSecrets**: para cada Pod, resolve `spec.imagePullSecrets` **e** os `imagePullSecrets` do ServiceAccount do Pod. Os payloads `.dockerconfigjson`/`.dockercfg` são decodificados e as credenciais são mapeadas para o registry de cada imagem (ex.: `index.docker.io`, `ghcr.io`). As credenciais são injetadas no pull feito pelo syft via `image.RegistryOptions`.
-3. **SBOM (syft)**: `pkg.Provide(...)` gera o SBOM da imagem — o syft baixa a imagem diretamente do registry usando as credenciais do passo 2.
-4. **CVEs (grype)**: o banco de vulnerabilidades do grype (v6) é baixado/atualizado na inicialização e os pacotes do SBOM são casados contra ele com `VulnerabilityMatcher.FindMatchesContext`.
-5. **API + SPA**: resultados ficam em memória e são servidos via API JSON + `index.html` (embutido no binário).
+1. **Discovery (client-go)**: lists the Pods of every namespace and collects the images from `containers`, `initContainers` and `ephemeralContainers`, also recording the **namespace and the controller** (Deployment/StatefulSet/DaemonSet/Job…) that owns each Pod (via ownerReferences + ReplicaSets).
+2. **imagePullSecrets**: for each Pod, resolves `spec.imagePullSecrets` **and** the `imagePullSecrets` of the Pod's ServiceAccount. The `.dockerconfigjson`/`.dockercfg` payloads are decoded and the credentials are mapped to the registry of each image (e.g. `index.docker.io`, `ghcr.io`). The credentials are injected into the pull made by syft via `image.RegistryOptions`.
+3. **SBOM (syft)**: `pkg.Provide(...)` generates the SBOM of the image — syft downloads the image directly from the registry using the credentials from step 2.
+4. **CVEs (grype)**: the grype vulnerability database (v6) is downloaded/updated at startup and the SBOM packages are matched against it with `VulnerabilityMatcher.FindMatchesContext`.
+5. **API + SPA**: results are kept in memory and served through a JSON API + `index.html` (embedded in the binary).
 
-> **Atenção**: o scan puxa as imagens **do registry** (não do runtime do nó). O Pod precisa de acesso de rede aos registries — imagens em registries inacessíveis aparecem com status `error` na UI.
+> **Note**: the scan pulls the images **from the registry** (not from the node runtime). The Pod needs network access to the registries — images in unreachable registries show up with status `error` in the UI.
 
-## Estrutura
+## Structure
 
 ```
-main.go                     wiring: flags, k8s client, DB, servidor HTTP, loop de scan
-internal/k8s/               descoberta de imagens + resolução de imagePullSecrets
-internal/registryauth/      parse do docker config JSON -> credenciais por registry
-internal/scanner/           syft (SBOM) + grype (CVE) como bibliotecas; store em memória
-internal/api/               API JSON + serve o SPA
-web/index.html              SPA (vanilla JS, sem build)
+main.go                     wiring: flags, k8s client, DB, HTTP server, scan loop
+internal/k8s/               image discovery + imagePullSecrets resolution
+internal/registryauth/      docker config JSON parsing -> credentials per registry
+internal/scanner/           syft (SBOM) + grype (CVE) as libraries; in-memory store
+internal/api/               JSON API + serves the SPA
+web/index.html              SPA (vanilla JS, no build)
 deploy/                     namespace, SA, ClusterRole(Binding), Deployment, Service
-Dockerfile / Makefile       build da imagem e automação
+Dockerfile / Makefile       image build and automation
 ```
 
 ## API
 
-| Método | Rota | Descrição |
+| Method | Route | Description |
 |---|---|---|
-| GET | `/api/status` | modo do client k8s, estado do banco grype, se um scan está rodando |
-| GET | `/api/images` | resumo por imagem: status, contagem de CVEs por severidade |
-| GET | `/api/cves?image=&artifact=&severity=&exclude=&id=&fixed=&namespace=` | CVEs filtrados (artifact = substring do nome do pacote syft) |
-| GET | `/api/namespaces` | namespaces distintos dos workloads das imagens escaneadas |
-| GET | `/api/artifacts?image=&q=` | nomes distintos de artefatos (pacotes) encontrados pelo syft |
-| POST | `/api/scan` | dispara um rescan de todas as imagens |
-| GET | `/api/export` | baixa o relatório como um **único HTML auto-contido** (dados embutidos; funciona offline) |
+| GET | `/api/status` | k8s client mode, grype DB state, whether a scan is running |
+| GET | `/api/images` | per-image summary: status, CVE count by severity |
+| GET | `/api/cves?image=&artifact=&severity=&exclude=&id=&fixed=&namespace=` | filtered CVEs (artifact = substring of the syft package name) |
+| GET | `/api/namespaces` | distinct namespaces of the workloads running scanned images |
+| GET | `/api/artifacts?image=&q=` | distinct artifact (package) names found by syft |
+| POST | `/api/scan` | triggers a rescan of all images |
+| GET | `/api/export` | downloads the report as a **single self-contained HTML** (embedded data; works offline) |
 | GET | `/healthz` | liveness/readiness |
 
-## Variáveis / flags
+## Monitoring
 
-| Flag | Env | Default | Descrição |
+While the scan server runs (locally or as the deployment installed in the cluster), a Prometheus `GET /metrics` endpoint is served on a separate listen address — `--metrics-listen <[ip][:port]>` (env `METRICS_LISTEN`), with both IP and port optional (defaults `0.0.0.0:9090`). The deployment exposes port 9090 as `metrics` on the Service.
+
+Metrics (text exposition format, no external dependencies):
+
+| Metric | Description |
+|---|---|
+| `artifactor_image_status{image,tag,status,namespace,kind,object,last_scan}` | one series per image **per workload instance**: `queued`/`scanning`/`scanned`/`error` status, the image without tag/digest, the workload (namespace, object kind and name) and the last successful scan (RFC3339 UTC) |
+| `artifactor_image_cve{image,tag,cve,severity,namespace,kind,object,last_scan}` | one series per CVE **per workload instance**: CVE + severity (`critical`/`high`/`medium`/`low`/`negligible`/`unknown`) |
+
+To integrate with the Prometheus Operator, `artifactor install --service-monitor` applies, besides the ServiceMonitor (scraping the `metrics` port every 60s), a PrometheusRule with CVE alerts:
+
+- **ArtifactorImageCriticalCVEs** and **ArtifactorImageHighCVEs**: fire when an image has `critical` or `high` CVEs (5m duration), routed with a `severity` label and annotated with the workload, namespace, CVE count and last scan time.
+
+## Variables / flags
+
+| Flag | Env | Default | Description |
 |---|---|---|---|
-| `--port` | `PORT` | `8080` | porta HTTP |
-| `--namespace` | `NAMESPACE` | (todos) | restringe o scan a uma **lista de namespaces separados por vírgula** (`--namespace a,b`); vazio = todos |
-| `--scan-interval` | `SCAN_INTERVAL` | `6h` | intervalo de rescan automático (`0` desliga) |
-| `--concurrency` | `CONCURRENCY` | `3` | scans paralelos |
-| `--db-dir` | `DB_DIR` | cache do usuário | diretório do banco de vulnerabilidades do grype |
-| `--db-auto-update` | `DB_AUTO_UPDATE` | `true` | baixa/atualiza o banco grype na inicialização |
-| `--grype-db-direct-download` | `GRYPE_DB_DIRECT_DOWNLOAD` | `false` | baixa o banco grype e seus metadados (`latest.json` + arquivo) diretamente via HTTP(S), sem a biblioteca de download do grype; respeita `--insecure-skip-tls` e `--db-ca-cert` |
-| `--ignore-grype-db-unavailable` | `IGNORE_GRYPE_DB_UNAVAILABLE` | `false` | continua servindo quando o banco grype não está disponível e não pôde ser baixado (os scans falham até ele ficar disponível); sem a flag, o artifactor encerra |
-| `--in-cluster` | `IN_CLUSTER` | `false` | executa o scan **dentro do cluster** em um pod temporário com os mesmos parâmetros (requer `--export <dir>`); o relatório é empacotado em `.tar.gz` no pod, baixado via API do Kubernetes e extraído localmente |
-| `--in-cluster-force` | `IN_CLUSTER_FORCE` | `false` | com `--in-cluster`: sobrescreve recursos existentes e remove tudo no fim **sem perguntar** |
-| `--in-cluster-keep` | `IN_CLUSTER_KEEP` | `false` | com `--in-cluster`: **mantém** os recursos criados (pod e ConfigMap da CA) ao sair e imprime o comando `kubectl` para removê-los manualmente |
-| `--in-cluster-image` | `IN_CLUSTER_IMAGE` | imagem do deployment | imagem do pod de scan (a imagem precisa conter o `artifactor` com suporte a `--export-tar` e ao subcomando interno `cat`) |
-| `--image-pull-policy` | `IMAGE_PULL_POLICY` | `IfNotPresent` | `imagePullPolicy` do pod do `--in-cluster` (`Always`, `IfNotPresent` ou `Never`) |
-| `--in-cluster-resources` | `IN_CLUSTER_RESOURCES` | `requests.cpu=100m,requests.memory=256Mi,limits.cpu=2,limits.memory=4Gi` | recursos (requests/limits de CPU/memória) do contêiner do pod do `--in-cluster`, como entradas `(requests\|limits).(memory\|cpu)=<quantidade>` separadas por vírgula (as entradas sobrescrevem os defaults) |
-| `--openshift` | `OPENSHIFT` | `false` | com `--in-cluster`: aplica os manifests OpenShift/OKD (`SecurityContextConstraints` + RBAC) que permitem o pod de scan rodar (requer cluster-admin) |
-| `--platform` | `PLATFORM` | `linux/<GOARCH>` | plataforma da imagem a escanear |
-| `--scan-timeout` | `SCAN_TIMEOUT` | `15m` | timeout por imagem |
-| `--export-html <arquivo>` | `EXPORT_HTML` | — | escaneia uma vez, exporta o relatório em um único HTML auto-contido e sai |
-| `--export-sbom <dir>` | `EXPORT_SBOM` | — | escaneia uma vez, exporta um SBOM syft (syft-json) por imagem no diretório e sai |
-| `--export-grype <dir>` | `EXPORT_GRYPE` | — | escaneia uma vez, exporta um relatório grype (JSON) por imagem no diretório e sai |
-| `--export <dir>` | `EXPORT` | — | escaneia uma vez, exporta o relatório completo (`scan.html` + `sbom/` + `grype/`) no diretório e sai |
+| `--port` | `PORT` | `8080` | HTTP port |
+| `--metrics-listen <[ip][:port]>` | `METRICS_LISTEN` | `0.0.0.0:9090` | listen address (IP and/or port, both optional) of the Prometheus `GET /metrics` endpoint |
+| `--namespace` | `NAMESPACE` | (all) | restricts the scan to a **comma-separated namespace list** (`--namespace a,b`); empty = all |
+| `--scan-interval` | `SCAN_INTERVAL` | `6h` | automatic rescan interval (`0` disables) |
+| `--concurrency` | `CONCURRENCY` | `3` | parallel scans |
+| `--db-dir` | `DB_DIR` | user cache | grype vulnerability database directory |
+| `--db-auto-update` | `DB_AUTO_UPDATE` | `true` | downloads/updates the grype DB at startup |
+| `--grype-db-direct-download` | `GRYPE_DB_DIRECT_DOWNLOAD` | `false` | downloads the grype DB and its metadata (`latest.json` + file) directly over HTTP(S), without grype's download library; honors `--insecure-skip-tls` and `--db-ca-cert` |
+| `--ignore-grype-db-unavailable` | `IGNORE_GRYPE_DB_UNAVAILABLE` | `false` | keeps serving when the grype DB is unavailable and could not be downloaded (scans fail until it becomes available); without the flag, artifactor exits |
+| `--in-cluster` | `IN_CLUSTER` | `false` | runs the scan **inside the cluster** in a temporary pod with the same parameters (requires `--export <dir>`); the report is packed as a `.tar.gz` in the pod, downloaded via the Kubernetes API and extracted locally |
+| `--in-cluster-force` | `IN_CLUSTER_FORCE` | `false` | with `--in-cluster`: overwrites existing resources and removes everything at the end **without asking** |
+| `--in-cluster-keep` | `IN_CLUSTER_KEEP` | `false` | with `--in-cluster`: **keeps** the created resources (pod and CA ConfigMap) when exiting and prints the `kubectl` command to remove them manually |
+| `--in-cluster-image` | `IN_CLUSTER_IMAGE` | deployment image | scan pod image (the image must contain an `artifactor` supporting `--export-tar` and the internal `cat` subcommand) |
+| `--image-pull-policy` | `IMAGE_PULL_POLICY` | `IfNotPresent` | `imagePullPolicy` of the `--in-cluster` pod (`Always`, `IfNotPresent` or `Never`) |
+| `--in-cluster-resources` | `IN_CLUSTER_RESOURCES` | `requests.cpu=100m,requests.memory=256Mi,limits.cpu=2,limits.memory=4Gi` | resources (CPU/memory requests/limits) of the `--in-cluster` pod container, as comma-separated `(requests\|limits).(memory\|cpu)=<quantity>` entries (the entries override the defaults) |
+| `--openshift` | `OPENSHIFT` | `false` | with `--in-cluster`: applies the OpenShift/OKD manifests (`SecurityContextConstraints` + RBAC) that allow the scan pod to run (requires cluster-admin) |
+| `--platform` | `PLATFORM` | `linux/<GOARCH>` | image platform to scan |
+| `--scan-timeout` | `SCAN_TIMEOUT` | `15m` | per-image timeout |
+| `--export-html <file>` | `EXPORT_HTML` | — | scans once, exports the report as a single self-contained HTML and exits |
+| `--export-sbom <dir>` | `EXPORT_SBOM` | — | scans once, exports one syft SBOM (syft-json) per image into the directory and exits |
+| `--export-grype <dir>` | `EXPORT_GRYPE` | — | scans once, exports one grype report (JSON) per image into the directory and exits |
+| `--export <dir>` | `EXPORT` | — | scans once, exports the full report (`scan.html` + `sbom/` + `grype/`) into the directory and exits |
 
-## Construir e rodar
+## Build and run
 
 ```bash
-make build          # binário local
-make run            # dev local (usa ~/.kube/config ou KUBECONFIG)
-make docker-build   # imagens multi-arch (linux/amd64 + arm64) via GoReleaser, sem push (snapshot)
-make deploy         # aplica os manifests (ns artifactor + RBAC + Deployment + Service)
+make build          # local binary
+make run            # local dev (uses ~/.kube/config or KUBECONFIG)
+make docker-build   # multi-arch images (linux/amd64 + arm64) via GoReleaser, no push (snapshot)
+make deploy         # applies the manifests (artifactor ns + RBAC + Deployment + Service)
 make port-forward   # kubectl port-forward svc/artifactor 8080:8080
-make logs           # logs do Pod
+make logs           # Pod logs
 ```
 
-Depois do port-forward, abra **http://localhost:8080**.
+After the port-forward, open **http://localhost:8080**.
 
-### Exportar o relatório
+### Exporting the report
 
-- **Pela UI**: o botão **Export** no cabeçalho baixa o relatório como um único HTML auto-contido (snapshot dos dados embutido — os filtros funcionam offline, sem o servidor).
-- **Pela CLI** (escaneia uma vez e sai):
-  - `artifactor --export-html report.html` — só o HTML auto-contido
-  - `artifactor --export-sbom sboms/` — um SBOM syft (`syft-json`) por imagem
-  - `artifactor --export-grype grype/` — um relatório grype (JSON) por imagem
-  - `artifactor --export export/` — os três: `scan.html` + `sbom/` + `grype/`
-  - ou `make export` (equivale ao `--export export/`)
+- **From the UI**: the **Export** button in the header downloads the report as a single self-contained HTML (snapshot with embedded data — the filters work offline, without the server).
+- **From the CLI** (scans once and exits):
+  - `artifactor --export-html report.html` — only the self-contained HTML
+  - `artifactor --export-sbom sboms/` — one syft SBOM (`syft-json`) per image
+  - `artifactor --export-grype grype/` — one grype report (JSON) per image
+  - `artifactor --export export/` — all three: `scan.html` + `sbom/` + `grype/`
+  - or `make export` (equivalent to `--export export/`)
 
-### Scan dentro do cluster (`--in-cluster`)
+### In-cluster scan (`--in-cluster`)
 
-Quando a máquina local não alcança os registries (ou o banco grype), o scan pode rodar **dentro do cluster** com os mesmos parâmetros:
+When the local machine cannot reach the registries (or the grype DB), the scan can run **inside the cluster** with the same parameters:
 
 ```bash
-artifactor scan --in-cluster --export relatorio/ --customer-name acme --grype-db-direct-download
+artifactor scan --in-cluster --export report/ --customer-name acme --grype-db-direct-download
 ```
 
-Fluxo:
-1. O artifactor cria um **pod** `artifactor-scan` no namespace `artifactor` (junto com namespace/SA/RBAC quando ainda não existem) rodando o scan com os mesmos parâmetros — exceto `--export` e `--db-dir`, reescritos para caminhos dentro do pod. Com `--db-ca-cert`, o certificado é copiado para o pod via **ConfigMap** (API do Kubernetes). Em clusters **OpenShift/OKD**, passe também `--openshift` para aplicar o `SecurityContextConstraints` + RBAC que permitem o pod rodar.
-2. O pod executa o scan e compacta todo o diretório de `--export` em um **`.tar.gz`** (flag interna `--export-tar`).
-3. Os logs do pod (**stdout + stderr**, fundidos pelo runtime) são exibidos no terminal local conforme produzidos (polling de 2s via API do Kubernetes; cada poll relê o log do início e pula as linhas já exibidas pelo número da última linha registrada, então uma conexão caída retoma da última linha sem repetir o log); o processo **baixa o `.tar.gz` via API do Kubernetes** (exec `artifactor cat`) e extrai no diretório local de `--export` (o `.tar.gz` fica em `<dir>.tar.gz`). Com `--open`, o `scan.html` baixado é aberto localmente.
-4. No fim, o pod e o ConfigMap da CA são removidos — **perguntando antes** (use `--in-cluster-force` para sobrescrever recursos existentes e remover sem perguntar, ou `--in-cluster-keep` para **manter** os recursos no cluster e imprimir o comando `kubectl` para removê-los manualmente).
+Flow:
+1. Artifactor creates an **`artifactor-scan` pod** in the `artifactor` namespace (along with the namespace/SA/RBAC when they don't exist yet) running the scan with the same parameters — except `--export` and `--db-dir`, rewritten to paths inside the pod. With `--db-ca-cert`, the certificate is copied to the pod via **ConfigMap** (Kubernetes API). On **OpenShift/OKD** clusters, also pass `--openshift` to apply the `SecurityContextConstraints` + RBAC that allow the pod to run.
+2. The pod runs the scan and packs the entire `--export` directory into a **`.tar.gz`** (internal `--export-tar` flag).
+3. The pod logs (**stdout + stderr**, merged by the runtime) are shown on the local terminal as they are produced (2s polling via the Kubernetes API; each poll re-reads the log from the beginning and skips the lines already shown by the number of the last recorded line, so a dropped connection resumes from the last line without repeating the log); the process **downloads the `.tar.gz` via the Kubernetes API** (exec `artifactor cat`) and extracts it into the local `--export` directory (the `.tar.gz` is kept at `<dir>.tar.gz`). With `--open`, the downloaded `scan.html` is opened locally.
+4. At the end, the pod and the CA ConfigMap are removed — **after asking** (use `--in-cluster-force` to overwrite existing resources and remove them without asking, or `--in-cluster-keep` to **keep** the resources in the cluster and print the `kubectl` command to remove them manually).
 
-A imagem é construída e publicada pelo **GoReleaser** (`.goreleaser.yaml`): binário estático linux/amd64 + arm64 e manifest multi-arch no ghcr.io (o workflow do GitHub Actions roda a cada push no `main` e em tags `v*`). Localmente: `make docker-build` (snapshot, sem push) ou, para publicar, crie uma tag e rode `make docker-push` com login no registry.
+The image is built and published by **GoReleaser** (`.goreleaser.yaml`): static linux/amd64 + arm64 binary and a multi-arch manifest on ghcr.io (the GitHub Actions workflow runs on every push to `main` and on `v*` tags). Locally: `make docker-build` (snapshot, no push) or, to publish, create a tag and run `make docker-push` logged into the registry.
 
-Para usar sua própria imagem, ajuste `deploy/deployment.yaml` ou:
+To use your own image, adjust `deploy/deployment.yaml` or:
 ```bash
 kubectl -n artifactor set image deployment/artifactor scanner=ghcr.io/getupcloud/artifactor:0.0.1
 ```
 
-## Desenvolver
+## Developing
 
-Para desenvolver, há uma **sessão de desenvolvimento em container**
-(`make build-session` / `make start-session`): um ambiente completo que roda
-**como o usuário local** (mesmo uid/gid — os arquivos gravados no repo montado
-mantêm o dono correto) e **sem dependências do toolchain do host**.
+For development, there is a **containerized development session**
+(`make build-session` / `make start-session`): a complete environment that runs
+**as the local user** (same uid/gid — files written to the mounted repo keep
+the correct owner) and **with no host toolchain dependencies**.
 
 ```bash
-make build-session   # constrói a imagem artifactor-session a partir do Dockerfile.session
-make start-session   # inicia uma sessão DeepSeek Coder com o SESSION.md como contexto inicial
+make build-session   # builds the artifactor-session image from Dockerfile.session
+make start-session   # starts a DeepSeek Coder session with SESSION.md as the initial context
 ```
 
-A imagem (`Dockerfile.session`) já embarca tudo o que o desenvolvimento precisa:
+The image (`Dockerfile.session`) already ships everything development needs:
 
 - Go, make + gcc, git, bash, curl, jq;
-- `kubectl` (versão alinhada ao client-go do repo) e o CLI `grype` (mesma versão da lib embutida no `go.mod`);
-- python3 + pip e o plugin `security-guidance` (carregado pela sessão via `--plugin-dir`);
-- o CLI DeepSeek Code (instalado na imagem, exposto como `deepseek`).
+- `kubectl` (version aligned with the repo's client-go) and the `grype` CLI (same version as the library embedded in `go.mod`);
+- python3 + pip and the `security-guidance` plugin (loaded by the session via `--plugin-dir`);
+- the DeepSeek Code CLI (installed in the image, exposed as `deepseek`).
 
-`make start-session` monta o diretório atual em `/workspace`, injeta a
-`DEEPSEEK_API_KEY` (lida do 1Password via `op`) e inicia o `deepseek` usando o
-`SESSION.md` como bootstrap — que aponta para `AGENTS.md`, `docs/adr/` e
-`specs/` como contexto do projeto. O container é descartável (`--rm`): o estado
-vive no repo montado, não na imagem.
+`make start-session` mounts the current directory at `/workspace`, injects the
+`DEEPSEEK_API_KEY` (read from 1Password via `op`) and starts `deepseek` using
+`SESSION.md` as the bootstrap — which points to `AGENTS.md`, `docs/adr/` and
+`specs/` as the project context. The container is disposable (`--rm`): the
+state lives in the mounted repo, not in the image.
 
-Variáveis: `SESSION_IMAGE` (nome da imagem), `DEEPSEEK` (comando do CLI) e
-`BUILD_SESSION_EXTRA_PARAMS` (parâmetros extras para o `docker build`).
+Variables: `SESSION_IMAGE` (image name), `DEEPSEEK` (CLI command) and
+`BUILD_SESSION_EXTRA_PARAMS` (extra parameters for `docker build`).
 
-## Publicação no ghcr.io (tokens)
+## Publishing to ghcr.io (tokens)
 
-Os workflows autenticam no ghcr.io preferindo o secret **`GHCR_PAT`** (PAT com scope `write:packages`) e usando `GITHUB_TOKEN` como fallback. Se o push falhar com `denied: permission_denied: read_package` usando o `GITHUB_TOKEN`, uma destas opções resolve:
+The workflows authenticate to ghcr.io preferring the **`GHCR_PAT`** secret (a PAT with the `write:packages` scope) and falling back to `GITHUB_TOKEN`. If the push fails with `denied: permission_denied: read_package` using the `GITHUB_TOKEN`, one of these options resolves it:
 
-1. **Adicionar o secret `GHCR_PAT`** no repositório (recomendado — mesmo PAT do imagePullSecret `docker-ghcr`, desde que tenha `write:packages`).
-2. **Vincular o pacote ao repositório**: GitHub → conta/org `getupcloud` → *Packages* → `artifactor` → *Package settings* → *Manage Actions access* → adicionar o repo com papel *Write*.
-3. **Recriar o pacote com Actions**: se o pacote foi criado por push local com outro token, apague-o no UI do ghcr.io e deixe o workflow recriá-lo.
-4. Habilitar, na org, *Packages* → permissões de criação/accesso para GitHub Actions.
+1. **Add the `GHCR_PAT` secret** to the repository (recommended — the same PAT as the `docker-ghcr` imagePullSecret, as long as it has `write:packages`).
+2. **Link the package to the repository**: GitHub → `getupcloud` account/org → *Packages* → `artifactor` → *Package settings* → *Manage Actions access* → add the repo with the *Write* role.
+3. **Recreate the package with Actions**: if the package was created by a local push with another token, delete it in the ghcr.io UI and let the workflow recreate it.
+4. Enable, in the org, *Packages* → creation/access permissions for GitHub Actions.
 
 ## Release
 
-O workflow `release` (disparado manualmente na aba **Actions**) lê a variável `VERSION` do Makefile, **falha se a tag `v<VERSION>` já existir** (local ou remoto), cria e publica a tag e roda o GoReleaser: imagens multi-arch no ghcr.io (`:<VERSION>` e `:<sha>` sempre; **`:latest` apenas quando a versão é a mais nova** entre as tags `v*`) + GitHub Release com os binários. Para lançar uma nova versão, edite `VERSION` no Makefile e dispare o workflow.
+The `release` workflow (triggered manually from the **Actions** tab) reads the `VERSION` variable from the Makefile, **fails if the `v<VERSION>` tag already exists** (local or remote), creates and publishes the tag and runs GoReleaser: multi-arch images on ghcr.io (`:<VERSION>` and `:<sha>` always; **`:latest` only when the version is the newest** among the `v*` tags) + a GitHub Release with the binaries. To ship a new version, edit `VERSION` in the Makefile and trigger the workflow.
 
 ## RBAC
 
-O scanner usa uma ServiceAccount dedicada com permissões mínimas (ClusterRole):
-`pods` (list/get/watch), `replicasets` (list/get — para resolver a cadeia de owners Pod → ReplicaSet → Deployment e exibir o controller de cada imagem), `serviceaccounts` (get) e `secrets` (get) — estes dois últimos apenas para resolver os `imagePullSecrets` referenciados pelos Pods/SAs.
+The scanner uses a dedicated ServiceAccount with minimal permissions (ClusterRole):
+`pods` (list/get/watch), `replicasets` (list/get — to resolve the Pod → ReplicaSet → Deployment owner chain and show the controller of each image), `serviceaccounts` (get) and `secrets` (get) — the last two only to resolve the `imagePullSecrets` referenced by Pods/SAs.
 
-## Limitações conhecidas
+## Known limitations
 
-- Imagens hospedadas em registries sem rota de rede a partir do Pod do scanner ficam com status `error`.
-- O primeiro download do banco de vulnerabilidades do grype exige acesso à internet (ou forneça um banco já existente via `--db-dir` + `--db-auto-update=false`). Se não houver banco utilizável e o download falhar, o processo encerra (use `--ignore-grype-db-unavailable` para continuar servindo mesmo assim).
-- Credenciais de `credHelpers`/`credStore` (clientes docker externos) não se aplicam; apenas o conteúdo dos secrets é usado.
+- Images hosted in registries without a network route from the scanner Pod get status `error`.
+- The first grype vulnerability database download requires internet access (or provide an existing database via `--db-dir` + `--db-auto-update=false`). If there is no usable database and the download fails, the process exits (use `--ignore-grype-db-unavailable` to keep serving anyway).
+- `credHelpers`/`credStore` credentials (external docker clients) do not apply; only the content of the secrets is used.

@@ -57,6 +57,7 @@ button.secondary { background: var(--panel2); border: 1px solid var(--border); c
   color: #a8cfff;
 }
 .statusline.show { display: flex; }
+.statusline.error { background: rgba(229,72,77,.12); border-color: rgba(229,72,77,.4); color: #ffb3b5; }
 .clusterbar {
   display: none; align-items: flex-end; gap: 12px; flex-wrap: wrap;
   padding: 8px 18px; background: var(--panel); border-bottom: 1px solid var(--border);
@@ -414,6 +415,7 @@ const state = {
   sevFilter: new Set(),// severities turned OFF (chips start all "on")
   statusFilter: new Set(), // image statuses hidden from the list (chips start all "on")
   status: null,
+  backendError: null,  // last /api/status failure (shown on the status line)
   imageSearch: "",
   lastQuery: null,     // /api/cves query string of the last render
   loaded: false,       // first CVE load finished (scan button enabled from here on)
@@ -492,15 +494,10 @@ async function refreshStatus() {
       if (problems.length) { banner.textContent = problems.join("\n"); banner.classList.add("show"); }
       else banner.classList.remove("show");
     }
-    // bottom status line while the vulnerability DB is downloading/updating
-    // (removed on the next poll once the update finishes)
-    const statusLine = $("status-line");
-    if (!SNAPSHOT && db.updating) {
-      statusLine.innerHTML = '<span class="dot scanning"></span> Atualizando DB de vulnerabilidades…';
-      statusLine.classList.add("show");
-    } else {
-      statusLine.classList.remove("show");
-    }
+    // status line: a backend connection error takes precedence over the DB
+    // update state; both are cleared once the backend answers again
+    state.backendError = null;
+    renderStatusLine();
     const scanning = !!state.status.scanning;
     // the button stays enabled during a scan: it becomes the cancel button
     $("scan-btn").disabled = !state.loaded;
@@ -512,7 +509,35 @@ async function refreshStatus() {
     $("context-select").disabled = scanning;
     $("add-cluster-btn").disabled = scanning;
     $("remove-cluster-btn").disabled = scanning;
-  } catch (e) { /* server restarting */ }
+  } catch (e) {
+    // backend unreachable: surface it on the status line (the next
+    // successful status poll clears it)
+    if (!SNAPSHOT) {
+      state.backendError = e && e.message ? e.message : String(e);
+      renderStatusLine();
+    }
+  }
+}
+
+// renderStatusLine shows the top status line: a backend connection error
+// takes precedence over the vulnerability DB update state; without either
+// the line is hidden. Snapshots never show it.
+function renderStatusLine() {
+  const line = $("status-line");
+  if (SNAPSHOT) {
+    line.classList.remove("show", "error");
+    return;
+  }
+  if (state.backendError) {
+    line.innerHTML = '<span class="dot error"></span> Erro de conexão com o backend: ' + esc(state.backendError);
+    line.classList.add("show", "error");
+  } else if (state.status && state.status.db && state.status.db.updating) {
+    line.innerHTML = '<span class="dot scanning"></span> Atualizando DB de vulnerabilidades…';
+    line.classList.add("show");
+    line.classList.remove("error");
+  } else {
+    line.classList.remove("show", "error");
+  }
 }
 
 async function refreshImages() {

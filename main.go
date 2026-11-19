@@ -292,7 +292,7 @@ func runScanCmd(args []string) {
 	}
 
 	var dbMu sync.RWMutex
-	dbStatus := scanner.DBStatus{Dir: *dbDir}
+	dbStatus := scanner.DBStatus{Dir: *dbDir, Updating: true} // cleared when the background init finishes
 	server := api.New(api.Options{
 		Store:        store,
 		Scanner:      sc,
@@ -406,6 +406,9 @@ func runScanCmd(args []string) {
 				return
 			case <-t.C:
 				logx.Debugf("checking for vulnerability DB update ...")
+				dbMu.Lock()
+				dbStatus.Updating = true
+				dbMu.Unlock()
 				updated, provider, status, err := scanner.RefreshDB(scanner.DBOptions{
 					Root:           *dbDir,
 					AppVersion:     version,
@@ -413,12 +416,14 @@ func runScanCmd(args []string) {
 					DirectDownload: *dbDirect,
 					Insecure:       *insecure,
 				})
+				dbMu.Lock()
 				if err != nil {
 					// keep the current (still usable) DB; just log the failure
+					dbStatus.Updating = false
+					dbMu.Unlock()
 					logx.Warnf("vulnerability DB refresh failed: %v", err)
 					continue
 				}
-				dbMu.Lock()
 				dbStatus = status
 				dbMu.Unlock()
 				if sc != nil && provider != nil {

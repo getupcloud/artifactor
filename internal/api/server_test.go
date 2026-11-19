@@ -1042,4 +1042,14 @@ func TestStatusEndpoint(t *testing.T) {
 	if db["error"] != "boom" {
 		t.Errorf("db error = %v", db["error"])
 	}
+
+	// the updating state flows through to the status payload
+	srv.opts.DB = func() scanner.DBStatus { return scanner.DBStatus{Dir: "/tmp/db", Updating: true} }
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	_ = json.Unmarshal(rec.Body.Bytes(), &status)
+	db = status["db"].(map[string]any)
+	if db["updating"] != true {
+		t.Errorf("db updating = %v, want true", db["updating"])
+	}
 }

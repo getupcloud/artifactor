@@ -50,6 +50,13 @@ button.secondary { background: var(--panel2); border: 1px solid var(--border); c
 }
 .banner.show { display: block; }
 .banner.info { background: rgba(79,156,249,.12); border-color: rgba(79,156,249,.4); color: #a8cfff; }
+.statusline {
+  display: none; align-items: center; justify-content: center; gap: 8px;
+  padding: 8px 18px; font-size: 13px;
+  background: var(--panel); border-bottom: 1px solid rgba(79,156,249,.4);
+  color: #a8cfff;
+}
+.statusline.show { display: flex; }
 .clusterbar {
   display: none; align-items: flex-end; gap: 12px; flex-wrap: wrap;
   padding: 8px 18px; background: var(--panel); border-bottom: 1px solid var(--border);
@@ -204,6 +211,7 @@ tr.expand-row:hover td { background: var(--bg); }
 </style>
 </head>
 <body>
+<div class="statusline" id="status-line"></div>
 <header>
   <h1>Artifactor</h1>
   <span class="chip" id="mode-chip">…</span>
@@ -483,6 +491,15 @@ async function refreshStatus() {
       if (db.error) problems.push("Vulnerability DB: " + db.error);
       if (problems.length) { banner.textContent = problems.join("\n"); banner.classList.add("show"); }
       else banner.classList.remove("show");
+    }
+    // bottom status line while the vulnerability DB is downloading/updating
+    // (removed on the next poll once the update finishes)
+    const statusLine = $("status-line");
+    if (!SNAPSHOT && db.updating) {
+      statusLine.innerHTML = '<span class="dot scanning"></span> Atualizando DB de vulnerabilidades…';
+      statusLine.classList.add("show");
+    } else {
+      statusLine.classList.remove("show");
     }
     const scanning = !!state.status.scanning;
     // the button stays enabled during a scan: it becomes the cancel button

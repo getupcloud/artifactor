@@ -30,6 +30,10 @@ type DBStatus struct {
 	Built         *time.Time `json:"built,omitempty"`
 	SchemaVersion string     `json:"schemaVersion,omitempty"`
 	Error         string     `json:"error,omitempty"`
+	// Updating is true while the database is being downloaded/updated in the
+	// background (the SPA shows a status line while it lasts). It is managed
+	// by the caller around NewProvider/RefreshDB, not by them.
+	Updating bool `json:"updating,omitempty"`
 }
 
 // newCurator builds the grype DB curator for dbRoot, configured so that a

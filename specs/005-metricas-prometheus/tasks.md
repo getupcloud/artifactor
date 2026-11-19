@@ -7,6 +7,9 @@
       ordenada, `Content-Type` text exposition)
 - [x] `internal/metrics/metrics_test.go`: `ParseListen`, `splitImageRef`,
       render (status/CVEs/`last_scan`), escaping e ordem
+- [x] labels `namespace`/`kind`/`object` por instância de workload nas duas
+      métricas (`splitController` + série única com labels vazios para
+      imagens sem workload) e teste golden atualizado
 - [x] `main.go`: flag `--metrics-listen` (env `METRICS_LISTEN`), parse fatal
       em valor inválido, segundo `http.Server` com `/metrics` no caminho do
       servidor local, shutdown no `ctx.Done`, bind failure = warning

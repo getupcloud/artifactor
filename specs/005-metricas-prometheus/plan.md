@@ -18,10 +18,16 @@
   cada scrape a partir de `Store.Snapshot("")` (o scrape sempre vê o estado
   atual, sem cache), com `Content-Type: text/plain; version=0.0.4;
   charset=utf-8`:
-  - `artifactor_image_status{image,tag,status,last_scan} 1` — uma série por
-    imagem do store (queued/scanning/scanned/error);
-  - `artifactor_image_cve{image,tag,cve,severity,last_scan} 1` — uma série
-    por CVE de imagem `scanned`;
+  - `artifactor_image_status{image,tag,status,namespace,kind,object,last_scan} 1`
+    — uma série por imagem do store (queued/scanning/scanned/error) **por
+    instância de workload**;
+  - `artifactor_image_cve{image,tag,cve,severity,namespace,kind,object,last_scan} 1`
+    — uma série por CVE de imagem `scanned` **por instância de workload**;
+  - `namespace`/`kind`/`object` vêm de `Result.Instances` (o discovery
+    grava `Controller` como `kind/nome`, ex. `deployment/api`; o render
+    separa via `splitController`); imagem sem instâncias (`--from-sbom`)
+    rende uma série com os três labels vazios — o conjunto de labels é
+    sempre o mesmo;
   - `last_scan` = `Result.ScannedAt` em RFC3339 UTC (vazio quando nil — a
     imagem nunca foi escaneada com sucesso);
   - labels escapados (`\`, `"`, newline) e séries ordenadas (saída

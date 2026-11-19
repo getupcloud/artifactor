@@ -46,9 +46,12 @@
   `/api/scan/cancel` (cancela o scan em andamento; imagens "scanning"
   voltam a "queued").
 - `internal/metrics/` — endpoint Prometheus `GET /metrics` em listen separado
-  (text exposition, sem lib externa): `artifactor_image_status` (uma série
-  por imagem: labels image/tag/status/last_scan) e `artifactor_image_cve`
-  (uma série por CVE: cve/severity), renderizadas do Store a cada scrape.
+  (text exposition, sem lib externa): `artifactor_image_status` e
+  `artifactor_image_cve`, uma série por **instância de workload** (labels
+  image/tag/status ou cve/severity + namespace/kind/object do workload —
+  `kind/nome` vem do `Controller` da descoberta; imagens sem workload
+  ficam com os três vazios — e last_scan), renderizadas do Store a cada
+  scrape.
 - `internal/registryauth/` — parsing de docker config, extração de authority.
 - `internal/ecr/` — cadeia de credenciais AWS (IRSA) para ECR.
 - `internal/logx/` — logger nivelado; toda linha carrega `arquivo:linha` do
@@ -277,4 +280,5 @@
   DB, política fail-fast do DB, formato de log com arquivo:linha, check de
   atualização de versão no início do scan, gerenciamento de clusters no SPA,
   cancelamento do scan pela UI, auto-open do SPA no navegador, métricas
-  Prometheus em `--metrics-listen` 0.0.0.0:9090.)
+  Prometheus em `--metrics-listen` 0.0.0.0:9090, status line
+  "Atualizando DB de vulnerabilidades" no SPA (`db.updating` no status).)

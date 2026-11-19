@@ -32,12 +32,15 @@ X tem CVE crítica há N dias"), sem parsear a API JSON ou os relatórios.
    0–65535) é erro fatal de flag no startup. O formato da exposição é o
    text exposition do Prometheus (`text/plain; version=0.0.4`).
 2. Métrica `artifactor_image_status` (gauge, valor 1) — uma série por
-   imagem conhecida do store, com labels `image` (referência sem tag/digest),
-   `tag`, `status` (queued/scanning/scanned/error) e `last_scan` (último
-   scan com sucesso da imagem).
+   imagem conhecida do store **por instância de workload**, com labels
+   `image` (referência sem tag/digest), `tag`, `status`
+   (queued/scanning/scanned/error), `namespace`, `kind` (tipo do objeto:
+   deployment/statefulset/daemonset/pod/...), `object` (nome do objeto) e
+   `last_scan` (último scan com sucesso da imagem).
 3. Métrica `artifactor_image_cve` (gauge, valor 1) — uma série por CVE de
-   imagem escaneada, com labels `image`, `tag`, `cve`, `severity`
-   (critical/high/medium/low/negligible/unknown) e `last_scan`.
+   imagem escaneada **por instância de workload**, com labels `image`,
+   `tag`, `cve`, `severity` (critical/high/medium/low/negligible/unknown),
+   `namespace`, `kind`, `object` e `last_scan`.
 4. O servidor de métricas sobe junto com o servidor local do `scan` (inclusive
    `--from-sbom` e o deployment instalado no cluster, que roda o mesmo
    caminho); **não** sobe nos exports one-shot nem no CLI `--in-cluster`
@@ -61,6 +64,11 @@ X tem CVE crítica há N dias"), sem parsear a API JSON ou os relatórios.
 - Imagem referenciada como `registry.exemplo.com:5000/app/api:v1.2.3` vira
   `image="registry.exemplo.com:5000/app/api"`, `tag="v1.2.3"`; referência
   por digest (`img@sha256:...`) fica com `tag=""`.
+- Imagem rodando num Deployment `api` no namespace `prod` e num StatefulSet
+  `api` no `staging` gera duas séries por CVE:
+  `{namespace="prod",kind="deployment",object="api",...}` e
+  `{namespace="staging",kind="statefulset",object="api",...}`; imagem sem
+  workload (`--from-sbom`) gera série com os três labels vazios.
 - Exportações (`--export*`) e `--in-cluster` continuam sem abrir a porta.
 - O deployment manifest expõe a porta 9090 (containerPort + Service) para o
   Prometheus scrape do cluster.

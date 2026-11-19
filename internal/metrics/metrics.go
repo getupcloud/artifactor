@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/scanner"
 )
 
@@ -147,11 +148,14 @@ type label struct {
 }
 
 // render builds the full text exposition of the store: one
-// artifactor_image_status series per known image and one
-// artifactor_image_cve series per CVE of scanned images, both carrying
-// image (repository URL without tag), tag and last_scan (the image's last
-// successful scan time, RFC3339 UTC, empty when never scanned) as labels.
-// Series are sorted for a deterministic output.
+// artifactor_image_status series per known image per workload instance and
+// one artifactor_image_cve series per CVE of scanned images per workload
+// instance, all carrying image (repository URL without tag), tag,
+// namespace, kind and object (the workload running the image; empty when
+// the image is not attached to a cluster object, e.g. --from-sbom) and
+// last_scan (the image's last successful scan time, RFC3339 UTC, empty
+// when never scanned) as labels. Series are sorted for a deterministic
+// output.
 func (h *Handler) render() []byte {
 	var statusLines, cveLines []string
 	for _, res := range h.store.Snapshot("") {
@@ -160,39 +164,64 @@ func (h *Handler) render() []byte {
 		if res.ScannedAt != nil {
 			lastScan = res.ScannedAt.UTC().Format(time.RFC3339)
 		}
-		statusLines = append(statusLines, formatSample("artifactor_image_status", []label{
-			{"image", name},
-			{"tag", tag},
-			{"status", res.Status},
-			{"last_scan", lastScan},
-		}))
-		for _, c := range res.Cves {
-			cveLines = append(cveLines, formatSample("artifactor_image_cve", []label{
+		// one series per workload instance; images without instances
+		// (--from-sbom) still get a series with empty object labels
+		insts := res.Instances
+		if len(insts) == 0 {
+			insts = []k8s.Instance{{}}
+		}
+		for _, inst := range insts {
+			kind, object := splitController(inst.Controller)
+			statusLines = append(statusLines, formatSample("artifactor_image_status", []label{
 				{"image", name},
 				{"tag", tag},
-				{"cve", c.ID},
-				{"severity", c.Severity},
+				{"status", res.Status},
+				{"namespace", inst.Namespace},
+				{"kind", kind},
+				{"object", object},
 				{"last_scan", lastScan},
 			}))
+			for _, c := range res.Cves {
+				cveLines = append(cveLines, formatSample("artifactor_image_cve", []label{
+					{"image", name},
+					{"tag", tag},
+					{"cve", c.ID},
+					{"severity", c.Severity},
+					{"namespace", inst.Namespace},
+					{"kind", kind},
+					{"object", object},
+					{"last_scan", lastScan},
+				}))
+			}
 		}
 	}
 	sort.Strings(statusLines)
 	sort.Strings(cveLines)
 
 	var buf bytes.Buffer
-	buf.WriteString("# HELP artifactor_image_status Scan status of each container image known to artifactor (1 = the image is in this state; the last_scan label is the image's last successful scan time in RFC3339 UTC, empty when never scanned).\n")
+	buf.WriteString("# HELP artifactor_image_status Scan status of each container image known to artifactor, per workload instance (1 = the image is in this state; namespace/kind/object identify the workload running it, empty when there is none; the last_scan label is the image's last successful scan time in RFC3339 UTC, empty when never scanned).\n")
 	buf.WriteString("# TYPE artifactor_image_status gauge\n")
 	for _, line := range statusLines {
 		buf.WriteString(line)
 		buf.WriteByte('\n')
 	}
-	buf.WriteString("# HELP artifactor_image_cve CVE found in a scanned container image (1 = present).\n")
+	buf.WriteString("# HELP artifactor_image_cve CVE found in a scanned container image, per workload instance running it (1 = present).\n")
 	buf.WriteString("# TYPE artifactor_image_cve gauge\n")
 	for _, line := range cveLines {
 		buf.WriteString(line)
 		buf.WriteByte('\n')
 	}
 	return buf.Bytes()
+}
+
+// splitController splits a controller reference of the form "kind/name"
+// (as recorded by the discovery, e.g. "deployment/api") into the kind and
+// object name; a reference without "/" yields an empty kind.
+func splitController(controller string) (kind, object string) {
+	if i := strings.Index(controller, "/"); i >= 0 {
+		return controller[:i], controller[i+1:]
+	}
+	return "", ""
 }
 
 // formatSample renders one exposition line "name{label="value",...} 1" with

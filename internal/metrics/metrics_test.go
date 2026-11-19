@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/scanner"
 )
 
@@ -97,6 +98,10 @@ func TestRender(t *testing.T) {
 		Image:     "registry.exemplo.com:5000/app/api:v1.2.3",
 		Status:    scanner.StatusScanned,
 		ScannedAt: &scannedAt,
+		Instances: []k8s.Instance{
+			{Namespace: "prod", Controller: "deployment/api"},
+			{Namespace: "staging", Controller: "statefulset/api"},
+		},
 		Cves: []scanner.CVE{
 			{ID: "CVE-2026-1111", Severity: "critical"},
 			{ID: "CVE-2026-2222", Severity: "high"},
@@ -116,18 +121,40 @@ func TestRender(t *testing.T) {
 		t.Errorf("Content-Type = %q, want %q", got, want)
 	}
 
-	want := `# HELP artifactor_image_status Scan status of each container image known to artifactor (1 = the image is in this state; the last_scan label is the image's last successful scan time in RFC3339 UTC, empty when never scanned).
+	want := `# HELP artifactor_image_status Scan status of each container image known to artifactor, per workload instance (1 = the image is in this state; namespace/kind/object identify the workload running it, empty when there is none; the last_scan label is the image's last successful scan time in RFC3339 UTC, empty when never scanned).
 # TYPE artifactor_image_status gauge
-artifactor_image_status{image="img",last_scan="",status="queued",tag=""} 1
-artifactor_image_status{image="nginx",last_scan="2026-11-18T10:00:00Z",status="scanned",tag="latest"} 1
-artifactor_image_status{image="registry.exemplo.com:5000/app/api",last_scan="2026-11-18T10:00:00Z",status="scanned",tag="v1.2.3"} 1
-# HELP artifactor_image_cve CVE found in a scanned container image (1 = present).
+artifactor_image_status{image="img",kind="",last_scan="",namespace="",object="",status="queued",tag=""} 1
+artifactor_image_status{image="nginx",kind="",last_scan="2026-11-18T10:00:00Z",namespace="",object="",status="scanned",tag="latest"} 1
+artifactor_image_status{image="registry.exemplo.com:5000/app/api",kind="deployment",last_scan="2026-11-18T10:00:00Z",namespace="prod",object="api",status="scanned",tag="v1.2.3"} 1
+artifactor_image_status{image="registry.exemplo.com:5000/app/api",kind="statefulset",last_scan="2026-11-18T10:00:00Z",namespace="staging",object="api",status="scanned",tag="v1.2.3"} 1
+# HELP artifactor_image_cve CVE found in a scanned container image, per workload instance running it (1 = present).
 # TYPE artifactor_image_cve gauge
-artifactor_image_cve{cve="CVE-2026-1111",image="registry.exemplo.com:5000/app/api",last_scan="2026-11-18T10:00:00Z",severity="critical",tag="v1.2.3"} 1
-artifactor_image_cve{cve="CVE-2026-2222",image="registry.exemplo.com:5000/app/api",last_scan="2026-11-18T10:00:00Z",severity="high",tag="v1.2.3"} 1
+artifactor_image_cve{cve="CVE-2026-1111",image="registry.exemplo.com:5000/app/api",kind="deployment",last_scan="2026-11-18T10:00:00Z",namespace="prod",object="api",severity="critical",tag="v1.2.3"} 1
+artifactor_image_cve{cve="CVE-2026-1111",image="registry.exemplo.com:5000/app/api",kind="statefulset",last_scan="2026-11-18T10:00:00Z",namespace="staging",object="api",severity="critical",tag="v1.2.3"} 1
+artifactor_image_cve{cve="CVE-2026-2222",image="registry.exemplo.com:5000/app/api",kind="deployment",last_scan="2026-11-18T10:00:00Z",namespace="prod",object="api",severity="high",tag="v1.2.3"} 1
+artifactor_image_cve{cve="CVE-2026-2222",image="registry.exemplo.com:5000/app/api",kind="statefulset",last_scan="2026-11-18T10:00:00Z",namespace="staging",object="api",severity="high",tag="v1.2.3"} 1
 `
 	if got := rr.Body.String(); got != want {
 		t.Errorf("metrics output mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestSplitController(t *testing.T) {
+	tests := []struct {
+		in     string
+		kind   string
+		object string
+	}{
+		{"deployment/api", "deployment", "api"},
+		{"pod/nginx-abc123", "pod", "nginx-abc123"},
+		{"", "", ""},
+		{"no-slash", "", ""},
+	}
+	for _, tt := range tests {
+		kind, object := splitController(tt.in)
+		if kind != tt.kind || object != tt.object {
+			t.Errorf("splitController(%q) = (%q, %q), want (%q, %q)", tt.in, kind, object, tt.kind, tt.object)
+		}
 	}
 }
 

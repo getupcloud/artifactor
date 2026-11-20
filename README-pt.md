@@ -6,7 +6,7 @@ O resultado é apresentado em uma **SPA** (Single-Page Application) que permite 
 
 > [!IMPORTANT]
 > O comando deve ser executado a partir de um local que tenha acesso tanto a API do cluster através do `kubeconfig`, quanto dos `registros de imagens` de containers que executam no cluster.
-> As credenciais de cada registro são coletadas durante a execução, baseado no campo `imagePullSecrets` de cada Pod, ou através de `IRSA` para clusters EKS.
+> As credenciais de cada registro são coletadas durante a execução, baseado no campo `imagePullSecrets` de cada Pod, ou através das identidades de workload da nuvem: `IRSA` no EKS, **GKE Workload Identity** e **Microsoft Entra Workload ID** (AKS).
 
 ## TL;DR;
 
@@ -120,6 +120,13 @@ Para integrar com o Prometheus Operator, `artifactor install --service-monitor` 
 
 - **ArtifactorImageCriticalCVEs** e **ArtifactorImageHighCVEs**: disparam quando uma imagem tem CVEs `critical` ou `high` (persistência de 5m), com label de rota `severity` e annotations com o workload, o namespace, a contagem de CVEs e o último scan.
 
+## VEX (Vulnerability Exploitability eXchange)
+
+O artifactor aceita **documentos VEX** (**OpenVEX** ou **CSAF**) que marcam CVEs como `not_affected` ou `fixed`, reduzindo ruído de alerta/triagem para CVEs que não se aplicam a uma imagem (componente não usado, versão não explorável etc.).
+
+- **CLI**: `--vex <arquivo|dir>` (repetível; env `VEX`, separada por vírgulas) carrega documentos no startup — um diretório contribui com todos os arquivos diretos (não recursivo); caminho inexistente ou formato não suportado falha no startup. Rejeitado junto com `--in-cluster` (os arquivos são locais). As CVEs ignoradas continuam aparecendo na SPA, marcadas com **badge VEX** e o nome do arquivo que as ignorou; o checkbox "**Hide VEX excluded**" as esconde (vale também para o CSV e o snapshot exportado).
+- **UI**: os botões **+ Add VEX** e **VEX files** (cluster bar) enviam documentos OpenVEX/CSAF (≤ 1 MiB) **sem reiniciar**: ao adicionar/remover, os matches de CVE já calculados são reprocessados na hora — sem rescan, sem refazer SBOM, sem pull de imagem. O diálogo "VEX files" lista os documentos com resumo e permite selecionar cada um, copiar (Ctrl+C), baixar e remover — documentos `--vex` do startup também aparecem no diálogo (copiar/baixar), mas não podem ser removidos pela UI. Os arquivos enviados ficam **apenas em memória** (+ um temp file para o processador do grype) — a API nunca devolve o conteúdo, exceto no download explícito.
+
 ## Variáveis / flags
 
 | Flag | Env | Default | Descrição |
@@ -142,6 +149,9 @@ Para integrar com o Prometheus Operator, `artifactor install --service-monitor` 
 | `--openshift` | `OPENSHIFT` | `false` | com `--in-cluster`: aplica os manifests OpenShift/OKD (`SecurityContextConstraints` + RBAC) que permitem o pod de scan rodar (requer cluster-admin) |
 | `--platform` | `PLATFORM` | `linux/<GOARCH>` | plataforma da imagem a escanear |
 | `--scan-timeout` | `SCAN_TIMEOUT` | `15m` | timeout por imagem |
+| `--gcp-auth` | `GCP_AUTH` | `true` | autentica em registries Google (`gcr.io`/Artifact Registry `*.pkg.dev`) via **GKE Workload Identity** (access token do metadata server) quando nenhum pull secret casa |
+| `--azure-auth` | `AZURE_AUTH` | `true` | autentica no Azure Container Registry (`*.azurecr.io`) via **Microsoft Entra Workload ID** (troca federada do AKS, envs `AZURE_*`) quando nenhum pull secret casa |
+| `--vex <arquivo\|dir>` | `VEX` | — | carrega documentos OpenVEX/CSAF que marcam CVEs como `not_affected`/`fixed` (repetível; um diretório contribui com seus arquivos diretos); rejeitado com `--in-cluster` |
 | `--export-html <arquivo>` | `EXPORT_HTML` | — | escaneia uma vez, exporta o relatório em um único HTML auto-contido e sai |
 | `--export-sbom <dir>` | `EXPORT_SBOM` | — | escaneia uma vez, exporta um SBOM syft (syft-json) por imagem no diretório e sai |
 | `--export-grype <dir>` | `EXPORT_GRYPE` | — | escaneia uma vez, exporta um relatório grype (JSON) por imagem no diretório e sai |

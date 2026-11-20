@@ -4,8 +4,8 @@
 
 Quando o SPA não consegue falar com o backend (servidor fora, erro de
 rede ou resposta HTTP de erro), a status line do topo da página (a mesma
-área usada pelo "Atualizando DB de vulnerabilidades…") passa a mostrar um
-erro em vermelho: "Erro de conexão com o backend: <motivo>". Quando o
+área usada pelo "Updating vulnerability DB…") passa a mostrar um
+erro em vermelho: "Backend connection error: <motivo>". Quando o
 próximo poll de status volta a funcionar, a linha é limpa (e volta ao
 estado do DB, se ainda estiver atualizando).
 
@@ -31,9 +31,9 @@ scan.
 
 ## Critérios de aceite
 
-- Com o servidor derrubado, o SPA mostra "Erro de conexão com o backend:
+- Com o servidor derrubado, o SPA mostra "Backend connection error:
   Failed to fetch" (ou similar) na status line em vermelho.
 - Subindo o servidor de novo, a linha some no próximo poll (≤ 8 s) e, se o
-  DB estiver atualizando, volta a mostrar "Atualizando DB de
-  vulnerabilidades…".
+  DB estiver atualizando, volta a mostrar "Updating vulnerability
+  DB…".
 - O relatório exportado (snapshot) não mostra a linha.

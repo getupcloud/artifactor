@@ -59,7 +59,7 @@ button.secondary { background: var(--panel2); border: 1px solid var(--border); c
 .statusline.show { display: flex; }
 .statusline.error { background: rgba(229,72,77,.12); border-color: rgba(229,72,77,.4); color: #ffb3b5; }
 .clusterbar {
-  display: none; align-items: flex-end; gap: 12px; flex-wrap: wrap;
+  display: none; align-items: flex-start; gap: 12px; flex-wrap: wrap;
   padding: 8px 18px; background: var(--panel); border-bottom: 1px solid var(--border);
 }
 .clusterbar.show { display: flex; }
@@ -80,6 +80,17 @@ button.danger { background: var(--err); }
   padding: 18px; width: min(680px, 94vw); display: flex; flex-direction: column; gap: 10px;
 }
 .modal h3 { margin: 0; font-size: 15px; }
+.modal.wide { width: min(900px, 94vw); }
+.vex-view {
+  margin: 0; max-height: 62vh; overflow: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: pre; word-break: break-all;
+}
+.vex-view .jstr { color: #9ece6a; }
+.vex-view .jnum { color: #ff9e64; }
+.vex-view .jlit { color: #bb9af7; }
+.vex-view .jpun { color: var(--muted); }
 .modal label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
 .modal input[type=text], .modal textarea {
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
@@ -90,6 +101,21 @@ button.danger { background: var(--err); }
 .modal .error { display: none; color: #ffb3b5; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
 .modal .error.show { display: block; }
 .clusterbar .hint { font-size: 12px; color: #ffb3b5; word-break: break-word; }
+.sec-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
+.vex-count { font-size: 12px; color: var(--muted); }
+.cluster-sec, .vex-sec { display: inline-flex; flex-direction: column; gap: 4px; }
+.sec-row { display: inline-flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.vex-sec .sec-row { gap: 6px; align-items: center; }
+.vex-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
+.vex-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; }
+.vex-item {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; cursor: pointer; font-size: 12.5px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.vex-item.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.vex-item .vname { font-weight: 600; word-break: break-all; }
+.vex-item .vsum { color: var(--muted); }
 .stats {
   display: flex; gap: 10px; flex-wrap: wrap; padding: 12px 18px 0;
 }
@@ -102,6 +128,8 @@ button.danger { background: var(--err); }
 .stat.sev, .stat.status { cursor: pointer; user-select: none; border-color: transparent; }
 .stat.off { opacity: .35; }
 .stat-divider { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
+.stat-group { display: flex; flex-direction: column; gap: 4px; }
+.stat-group .sec-row { gap: 10px; }
 .registry-stats {
   display: flex; gap: 6px 16px; flex-wrap: wrap; padding: 8px 18px 0; font-size: 12.5px; color: var(--muted);
 }
@@ -203,6 +231,11 @@ tr.expand-row:hover td { background: var(--bg); }
 .badge.low { background: var(--low); }
 .badge.negligible { background: var(--negligible); color: #dfe6ee; }
 .badge.unknown { background: var(--unknown); color: #dfe6ee; }
+.badge.vex {
+  background: transparent; color: var(--medium);
+  border: 1px solid var(--medium); font-weight: 600;
+}
+.vex-file { color: var(--muted); font-size: 11px; }
 .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
 .pkgname { font-weight: 600; }
 .desc { color: var(--muted); max-width: 420px; }
@@ -225,15 +258,30 @@ tr.expand-row:hover td { background: var(--bg); }
 </header>
 
 <div class="clusterbar" id="cluster-bar">
-  <label>Cluster
-    <select id="cluster-select"></select>
-  </label>
-  <label id="context-label">Context
-    <select id="context-select"></select>
-  </label>
-  <button class="secondary" id="add-cluster-btn" title="Add a cluster by pasting its kubeconfig">+ Add cluster</button>
-  <button class="secondary" id="remove-cluster-btn" title="Remove the selected cluster">Remove</button>
-  <span class="hint" id="cluster-error"></span>
+  <span class="cluster-sec">
+    <span class="sec-title">Cluster</span>
+    <span class="sec-row">
+      <label>Cluster Name
+        <select id="cluster-select" title="Cluster"></select>
+      </label>
+      <label id="context-label">Context
+        <select id="context-select"></select>
+      </label>
+      <button class="secondary" id="add-cluster-btn" title="Add a cluster by pasting its kubeconfig">+ Add cluster</button>
+      <button class="secondary" id="remove-cluster-btn" title="Remove the selected cluster">Remove</button>
+      <span class="hint" id="cluster-error"></span>
+    </span>
+  </span>
+  <span class="vex-sep"></span>
+  <span class="vex-sec">
+    <span class="sec-title">VEX</span>
+    <span class="vex-count" id="vex-stats"></span>
+    <span class="sec-row">
+      <button class="secondary" id="add-vex-btn" title="Add an OpenVEX or CSAF document — reprocesses the CVEs without re-scanning">+ Add VEX</button>
+      <button class="secondary" id="vex-files-btn" title="List, copy, download and remove the uploaded VEX documents">VEX files</button>
+      <input type="file" id="vex-file-input" accept=".json,application/json" multiple hidden>
+    </span>
+  </span>
 </div>
 
 <div class="modal-overlay" id="add-modal">
@@ -253,22 +301,58 @@ tr.expand-row:hover td { background: var(--bg); }
   </div>
 </div>
 
+<div class="modal-overlay" id="vex-modal">
+  <div class="modal">
+    <h3>VEX documents</h3>
+    <div class="vex-list" id="vex-list"></div>
+    <div class="hint" id="vex-hint">Click a file to view its content; select to copy (Ctrl+C), download or remove it.</div>
+    <div class="error" id="vex-error"></div>
+    <div class="actions">
+      <button class="secondary" id="vex-copy" disabled>Copy</button>
+      <button class="secondary" id="vex-download" disabled>Download</button>
+      <button class="secondary danger" id="vex-remove" disabled>Remove</button>
+      <button class="secondary" id="vex-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="vex-view-modal">
+  <div class="modal wide">
+    <h3 id="vex-view-title">VEX document</h3>
+    <pre class="vex-view" id="vex-view"></pre>
+    <div class="error" id="vex-view-error"></div>
+    <div class="actions">
+      <button class="secondary" id="vex-view-close">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="banner" id="banner"></div>
 
 <div class="stats" id="stats">
-  <div class="stat"><div class="n" id="stat-images">0</div><div class="l">Images</div></div>
-  <div class="stat status" data-status="scanned" title="Show/hide scanned images"><div class="n" id="stat-scanned">0</div><div class="l">Scanned</div></div>
-  <div class="stat status" data-status="error" title="Show/hide images with errors"><div class="n" id="stat-errors">0</div><div class="l">Errors</div></div>
-  <div class="stat status" data-status="scanning" title="Show/hide images being scanned"><div class="n" id="stat-scanning">0</div><div class="l">Scanning</div></div>
-  <div class="stat status" data-status="queued" title="Show/hide images waiting to be scanned"><div class="n" id="stat-waiting">0</div><div class="l">Waiting</div></div>
+  <div class="stat-group">
+    <span class="sec-title">Images</span>
+    <div class="sec-row">
+      <div class="stat"><div class="n" id="stat-images">0</div><div class="l">Images</div></div>
+      <div class="stat status" data-status="scanned" title="Show/hide scanned images"><div class="n" id="stat-scanned">0</div><div class="l">Scanned</div></div>
+      <div class="stat status" data-status="error" title="Show/hide images with errors"><div class="n" id="stat-errors">0</div><div class="l">Errors</div></div>
+      <div class="stat status" data-status="scanning" title="Show/hide images being scanned"><div class="n" id="stat-scanning">0</div><div class="l">Scanning</div></div>
+      <div class="stat status" data-status="queued" title="Show/hide images waiting to be scanned"><div class="n" id="stat-waiting">0</div><div class="l">Waiting</div></div>
+    </div>
+  </div>
   <div class="stat-divider"></div>
-  <div class="stat"><div class="n" id="stat-cves">0</div><div class="l">Total CVEs</div></div>
-  <div class="stat sev" data-sev="critical"><div class="n critical" id="stat-critical">0</div><div class="l">Critical</div></div>
-  <div class="stat sev" data-sev="high"><div class="n high" id="stat-high">0</div><div class="l">High</div></div>
-  <div class="stat sev" data-sev="medium"><div class="n medium" id="stat-medium">0</div><div class="l">Medium</div></div>
-  <div class="stat sev" data-sev="low"><div class="n low" id="stat-low">0</div><div class="l">Low</div></div>
-  <div class="stat sev" data-sev="negligible"><div class="n negligible" id="stat-negligible">0</div><div class="l">Negligible</div></div>
-  <div class="stat sev" data-sev="unknown"><div class="n unknown" id="stat-unknown">0</div><div class="l">Unknown</div></div>
+  <div class="stat-group">
+    <span class="sec-title">CVEs</span>
+    <div class="sec-row">
+      <div class="stat"><div class="n" id="stat-cves">0</div><div class="l">Total CVEs</div></div>
+      <div class="stat sev" data-sev="critical"><div class="n critical" id="stat-critical">0</div><div class="l">Critical</div></div>
+      <div class="stat sev" data-sev="high"><div class="n high" id="stat-high">0</div><div class="l">High</div></div>
+      <div class="stat sev" data-sev="medium"><div class="n medium" id="stat-medium">0</div><div class="l">Medium</div></div>
+      <div class="stat sev" data-sev="low"><div class="n low" id="stat-low">0</div><div class="l">Low</div></div>
+      <div class="stat sev" data-sev="negligible"><div class="n negligible" id="stat-negligible">0</div><div class="l">Negligible</div></div>
+      <div class="stat sev" data-sev="unknown"><div class="n unknown" id="stat-unknown">0</div><div class="l">Unknown</div></div>
+    </div>
+  </div>
 </div>
 
 <div class="registry-stats" id="registry-stats"></div>
@@ -294,6 +378,10 @@ tr.expand-row:hover td { background: var(--bg); }
         <select id="named-vuln-filter">
           <option value="">None</option>
         </select>
+      </label>
+      <label class="cb" title="Hide CVEs ignored by a VEX document (not_affected or fixed)">
+        <input type="checkbox" id="vex-filter">
+        Hide VEX excluded
       </label>
       <label class="cb" title="Show only CVEs that have a fixed version available">
         <input type="checkbox" id="fixed-filter">
@@ -364,6 +452,7 @@ function snapshotFilterCVEs(params) {
   const sevs = (params.get("severity") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const excluded = (params.get("exclude") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const fixedOnly = params.get("fixed") === "1";
+  const excludeVex = params.get("exclude-vex") === "1";
   const rows = (SNAPSHOT.cves || []).filter((c) =>
     (!image || c.image === image) &&
     (!namespace || (c.images || []).some((ref) => ref.image === c.image && ref.namespace === namespace)) &&
@@ -371,7 +460,8 @@ function snapshotFilterCVEs(params) {
     (!idTokens.length || idTokens.some((t) => (c.id || "").toLowerCase().includes(t))) &&
     (!sevs.length || sevs.includes(c.severity)) &&
     (!excluded.length || !excluded.includes(c.severity)) &&
-    (!fixedOnly || (c.fixedIn && c.fixedIn.length > 0))
+    (!fixedOnly || (c.fixedIn && c.fixedIn.length > 0)) &&
+    (!excludeVex || !c.vexStatus)
   );
   const rank = Object.fromEntries(SEVS.map((s, i) => [s, i]));
   rows.sort((a, b) =>
@@ -421,10 +511,16 @@ const state = {
   loaded: false,       // first CVE load finished (scan button enabled from here on)
   clusters: [],        // /api/clusters entries ([] hides the cluster bar)
   selectedCluster: "", // name of the cluster the scan targets
+  vexFiles: [],        // uploaded VEX documents (name/format/summary)
+  selectedVex: "",     // selected document in the VEX dialog
 };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// vexBaseName returns the file name of a VEX document path (shown next to
+// the VEX badge).
+const vexBaseName = (p) => (p || "").split("/").pop();
 
 // fmtBytes renders a byte count with binary units (matches the Go side).
 const fmtBytes = (n) => {
@@ -529,10 +625,10 @@ function renderStatusLine() {
     return;
   }
   if (state.backendError) {
-    line.innerHTML = '<span class="dot error"></span> Erro de conexão com o backend: ' + esc(state.backendError);
+    line.innerHTML = '<span class="dot error"></span> Backend connection error: ' + esc(state.backendError);
     line.classList.add("show", "error");
   } else if (state.status && state.status.db && state.status.db.updating) {
-    line.innerHTML = '<span class="dot scanning"></span> Atualizando DB de vulnerabilidades…';
+    line.innerHTML = '<span class="dot scanning"></span> Updating vulnerability DB…';
     line.classList.add("show");
     line.classList.remove("error");
   } else {
@@ -605,6 +701,7 @@ function buildCVEsParams() {
   if (cveIds.length) params.set("id", cveIds.join(" "));
   const ns = $("namespace-filter").value;
   if (ns) params.set("namespace", ns);
+  if ($("vex-filter").checked) params.set("exclude-vex", "1");
   if ($("fixed-filter").checked) params.set("fixed", "1");
   // chips start all "on"; clicking one turns that severity OFF (excluded)
   if (state.sevFilter.size) params.set("exclude", [...state.sevFilter].join(","));
@@ -645,10 +742,15 @@ async function loadCVEs() {
     const idCell = c.dataSource
       ? '<a class="mono" href="' + esc(c.dataSource) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">' + esc(c.id) + "</a>"
       : '<span class="mono">' + esc(c.id) + "</span>";
+    // indicator for CVEs ignored by a VEX document: status + reference file
+    const vexBadge = c.vexStatus
+      ? ' <span class="badge vex" title="Ignored by VEX (' + esc(c.vexStatus) + ') via ' + esc(c.vexFile) + '">VEX</span> ' +
+        '<span class="vex-file mono">' + esc(vexBaseName(c.vexFile)) + "</span>"
+      : "";
     const fixed = (c.fixedIn || []).slice(0, 3).map(esc).join(", ");
     tr.innerHTML =
       '<td class="chev">▸</td>' +
-      "<td>" + idCell + "</td>" +
+      "<td>" + idCell + vexBadge + "</td>" +
       '<td><span class="badge ' + esc(c.severity) + '">' + esc(c.severity) + "</span></td>" +
       '<td><span class="pkgname">' + esc(c.package) + '</span> <span class="desc">(' + esc(c.packageType) + ")</span></td>" +
       '<td class="mono">' + esc(c.packageVersion) + "</td>" +
@@ -1084,6 +1186,7 @@ $("artifact-filter").oninput = () => {
   debounce = setTimeout(() => { loadCVEs(); loadArtifacts(); }, 250);
 };
 $("cve-filter").oninput = () => { clearTimeout(debounce); debounce = setTimeout(loadCVEs, 250); };
+$("vex-filter").onchange = loadCVEs;
 $("fixed-filter").onchange = loadCVEs;
 $("namespace-filter").onchange = loadCVEs;
 $("named-vuln-filter").onchange = loadCVEs;
@@ -1113,6 +1216,7 @@ for (const el of document.querySelectorAll(".stat.status")) {
 $("clear-btn").onclick = () => {
   $("artifact-filter").value = "";
   $("cve-filter").value = "";
+  $("vex-filter").checked = false;
   $("fixed-filter").checked = false;
   $("namespace-filter").value = "";
   $("named-vuln-filter").value = "";
@@ -1174,6 +1278,163 @@ async function loadNamespaces() {
   sel.value = namespaces.includes(current) ? current : "";
 }
 
+/* ---------- VEX documents ---------- */
+
+async function loadVexFiles() {
+  try { state.vexFiles = (await api("/api/vex")).files || []; }
+  catch { return; }
+  renderVexList();
+}
+
+function renderVexList() {
+  const list = $("vex-list");
+  list.innerHTML = "";
+  for (const f of state.vexFiles) {
+    const item = document.createElement("div");
+    item.className = "vex-item" + (state.selectedVex === f.name ? " active" : "");
+    item.innerHTML = '<span class="vname">' + esc(f.name) + "</span>" +
+      '<span class="vsum">' + esc(f.format) + " · " + esc(f.size) + " B · " + esc(f.summary) +
+      (f.removable ? "" : " · startup") + "</span>";
+    item.onclick = () => { state.selectedVex = f.name; renderVexList(); openVexDoc(f.name); };
+    list.appendChild(item);
+  }
+  const sel = state.vexFiles.find((f) => f.name === state.selectedVex);
+  if (!sel) state.selectedVex = "";
+  $("vex-copy").disabled = !sel;
+  $("vex-download").disabled = !sel;
+  $("vex-remove").disabled = !sel || !sel.removable;
+  $("vex-remove").title = sel && !sel.removable
+    ? "Startup documents (--vex) cannot be removed from the UI"
+    : "Remove the selected document";
+  const files = state.vexFiles.length;
+  const records = state.vexFiles.reduce((n, f) => n + (f.records || 0), 0);
+  $("vex-stats").textContent = files + (files === 1 ? " file" : " files") +
+    " · " + records + (records === 1 ? " record" : " records");
+}
+
+async function vexContent(name) {
+  const res = await fetch("/api/vex/" + encodeURIComponent(name));
+  if (!res.ok) throw new Error(await errorText(res));
+  return res.text();
+}
+
+// highlightJSON renders a JSON text with span-based syntax highlighting
+// (keys/strings, numbers, literals and punctuation), escaping every piece
+// so nothing from the document becomes markup.
+function highlightJSON(text) {
+  const re = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+  let out = "", last = 0, m;
+  while ((m = re.exec(text))) {
+    out += esc(text.slice(last, m.index));
+    if (m[1]) out += '<span class="jstr">' + esc(m[1]) + "</span>" +
+      (m[2] ? '<span class="jpun">' + esc(m[2]) + "</span>" : "");
+    else if (m[3]) out += '<span class="jlit">' + esc(m[3]) + "</span>";
+    else out += '<span class="jnum">' + esc(m[0]) + "</span>";
+    last = m.index + m[0].length;
+  }
+  return out + esc(text.slice(last));
+}
+
+// openVexDoc fetches a VEX document and shows it pretty-printed with syntax
+// highlighting in the view modal.
+async function openVexDoc(name) {
+  $("vex-view-title").textContent = name;
+  $("vex-view").innerHTML = "";
+  $("vex-view-error").classList.remove("show");
+  $("vex-view-modal").classList.add("show");
+  try {
+    const content = await vexContent(name);
+    let pretty = content;
+    try { pretty = JSON.stringify(JSON.parse(content), null, 2); } catch { /* keep raw */ }
+    $("vex-view").innerHTML = highlightJSON(pretty);
+  } catch (e) {
+    const err = $("vex-view-error");
+    err.textContent = e.message;
+    err.classList.add("show");
+  }
+}
+
+$("vex-view-close").onclick = () => $("vex-view-modal").classList.remove("show");
+
+$("add-vex-btn").onclick = () => $("vex-file-input").click();
+
+$("vex-file-input").onchange = async () => {
+  const input = $("vex-file-input");
+  for (const file of input.files) {
+    const content = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(file);
+    });
+    try {
+      const res = await fetch("/api/vex", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: file.name, content }),
+      });
+      if (!res.ok) throw new Error(await errorText(res));
+    } catch (e) {
+      showBannerError("VEX: " + e.message);
+      continue;
+    }
+    loadVexFiles();
+    poll(); // the server reprocessed the CVEs with the new document
+  }
+  input.value = "";
+};
+
+$("vex-files-btn").onclick = () => {
+  $("vex-modal").classList.add("show");
+  $("vex-error").classList.remove("show");
+  state.selectedVex = "";
+  loadVexFiles();
+};
+
+$("vex-close").onclick = () => $("vex-modal").classList.remove("show");
+
+$("vex-copy").onclick = async () => {
+  if (!state.selectedVex) return;
+  try { await copyText(await vexContent(state.selectedVex)); }
+  catch (e) { showBannerError("VEX: " + e.message); }
+};
+
+$("vex-download").onclick = async () => {
+  if (!state.selectedVex) return;
+  const content = await vexContent(state.selectedVex).catch((e) => { showBannerError("VEX: " + e.message); return null; });
+  if (content == null) return;
+  const blob = new Blob([content], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = state.selectedVex;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+$("vex-remove").onclick = async () => {
+  if (!state.selectedVex) return;
+  try {
+    const res = await fetch("/api/vex/" + encodeURIComponent(state.selectedVex), { method: "DELETE" });
+    if (!res.ok) throw new Error(await errorText(res));
+  } catch (e) {
+    showBannerError("VEX: " + e.message);
+    return;
+  }
+  state.selectedVex = "";
+  loadVexFiles();
+  poll(); // the server reprocessed the CVEs without the document
+};
+
+// Ctrl+C inside the dialog copies the selected document
+document.addEventListener("keydown", async (e) => {
+  if (!$("vex-modal").classList.contains("show") || !state.selectedVex) return;
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "c") return;
+  e.preventDefault();
+  try { await copyText(await vexContent(state.selectedVex)); }
+  catch (err) { showBannerError("VEX: " + err.message); }
+});
+
 /* ---------- polling ---------- */
 
 async function poll() {
@@ -1209,6 +1470,7 @@ loadArtifacts();
 loadNamedVulns();
 loadClusters().catch(() => {});
 loadNamespaces().catch(() => {});
+loadVexFiles().catch(() => {});
 if (!SNAPSHOT) setInterval(poll, 8000);
 </script>
 </body>

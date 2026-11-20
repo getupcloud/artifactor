@@ -72,6 +72,7 @@ type inClusterOpts struct {
 	ExportCSV       string
 	OpenCmd         string
 	OpenShift       bool
+	VexFiles        []string
 }
 
 var deploymentImageExtractPattern = regexp.MustCompile(`(?m)^\s+image:\s*(\S+)`)
@@ -90,6 +91,9 @@ func runInClusterScan(ctx context.Context, o inClusterOpts) error {
 	}
 	if o.FromSBOM != "" {
 		return fmt.Errorf("--from-sbom cannot be used with --in-cluster (the SBOM file(s) are local)")
+	}
+	if len(o.VexFiles) > 0 {
+		return fmt.Errorf("--vex cannot be used with --in-cluster (the VEX document(s) are local)")
 	}
 	if o.ExportHTML != "" || o.ExportSBOM != "" || o.ExportGrype != "" || o.ExportCSV != "" {
 		return fmt.Errorf("--in-cluster only supports --export <dir> (the other --export* flags write locally)")

@@ -42,9 +42,14 @@
   (cluster do startup + kubeconfigs colados na UI; o conteúdo dos
   kubeconfigs nunca sai do processo).
 - `internal/api/` — servidor HTTP, endpoints JSON, exports HTML/CSV/SBOM;
-  endpoints `/api/clusters` (list/add/remove/select/context) e
+  endpoints `/api/clusters` (list/add/remove/select/context),
   `/api/scan/cancel` (cancela o scan em andamento; imagens "scanning"
-  voltam a "queued").
+  voltam a "queued") e `/api/vex` (a list inclui os docs `--vex` do
+  startup + uploads; add/remove/download de uploads e download dos docs do
+  startup — os do startup não são removíveis pela UI; add/remove
+  reprocessa as CVEs sem rescan).
+- `internal/vex/` — registro em memória dos documentos VEX enviados pela UI
+  (temp file por doc para o processador do grype ler, resumo OpenVEX/CSAF).
 - `internal/metrics/` — endpoint Prometheus `GET /metrics` em listen separado
   (text exposition, sem lib externa): `artifactor_image_status` e
   `artifactor_image_cve`, uma série por **instância de workload** (labels
@@ -54,6 +59,10 @@
   scrape.
 - `internal/registryauth/` — parsing de docker config, extração de authority.
 - `internal/ecr/` — cadeia de credenciais AWS (IRSA) para ECR.
+- `internal/gcp/` — token do metadata server do GKE (Workload Identity) para
+  registries Google (gcr.io/\*.pkg.dev).
+- `internal/azure/` — client assertion flow do Entra ID (AKS Workload
+  Identity, envs `AZURE_*`) para ACR (\*.azurecr.io).
 - `internal/logx/` — logger nivelado; toda linha carrega `arquivo:linha` do
   chamador (path relativo ao repo).
 - `web/index.html` — SPA (go:embed); `web/names.json` — lista de
@@ -135,8 +144,22 @@
   `--export-csv`; `--open <cmd>` abre o scan.html depois (`${FILE}`
   substituído; default `xdg-open`).
 - `--from-sbom <file|dir>` — scan só-grype de SBOMs locais (sem cluster).
+- `--vex <arquivo|diretório>` (env `VEX` separada por vírgulas; flag
+  repetível) — documentos VEX (OpenVEX/CSAF) que ignoram CVEs
+  (`not_affected`/`fixed`); um diretório contribui com todos os arquivos
+  diretos (não recursivo). Um processador por arquivo (a lib não expõe a
+  origem por documento) marca as CVEs ignoradas com `vexStatus`/`vexFile`;
+  o SPA mostra badge VEX + nome do arquivo e o checkbox "Hide VEX
+  excluded" esconde as linhas (`exclude-vex=1` na API, vale para o CSV e
+  snapshot). Rejeitado com `--in-cluster` (arquivos locais). A UI também
+  gerencia documentos VEX (`/api/vex`): upload (OpenVEX/CSAF) e remoção
+  reprocessam as CVEs na hora via `Scanner.ReprocessVex`, que re-aplica o
+  VEX sobre os **matches crus guardados por imagem** (sem pull, sem DB,
+  sem refazer SBOM); diálogo com resumo, seleção, copy (Ctrl+C), download
+  e remove. Arquivos enviados ficam só em memória (+ temp file).
 - Discovery/scan: `--namespace a,b`, `--scan-interval`, `--concurrency`,
-  `--scan-timeout`, `--platform`, `--keep-sbom`, `--ecr-auth`,
+  `--scan-timeout`, `--platform`, `--keep-sbom`, `--ecr-auth`, `--gcp-auth`
+  (GKE Workload Identity), `--azure-auth` (Entra Workload ID),
   `--insecure-skip-tls` (registries, refresh do names.json e downloads
   diretos do DB).
 - Banco: `--db-dir`, `--db-auto-update`, `--db-refresh-interval`,
@@ -287,6 +310,9 @@
   atualização de versão no início do scan, gerenciamento de clusters no SPA,
   cancelamento do scan pela UI, auto-open do SPA no navegador, métricas
   Prometheus em `--metrics-listen` 0.0.0.0:9090, status line
-  "Atualizando DB de vulnerabilidades" no SPA (`db.updating` no status),
-  erros de conexão com o backend na mesma status line do SPA, access log
-  dos servidores HTTP (SPA, API e métricas).)
+  "Updating vulnerability DB" no SPA (`db.updating` no status),
+  "Backend connection error" na mesma status line do SPA, access log
+  dos servidores HTTP (SPA, API e métricas), suporte a VEX (`--vex`,
+  indicador e filtro no SPA), gestão de VEX na UI (upload + reprocessamento
+  sem rescan + diálogo com copy/download), GKE Workload Identity
+  (`--gcp-auth`) e Microsoft Entra Workload ID (`--azure-auth`).)

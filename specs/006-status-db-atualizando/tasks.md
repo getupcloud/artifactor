@@ -1,4 +1,4 @@
-# Tasks: status line "Atualizando DB de vulnerabilidades" no SPA
+# Tasks: status line "Updating vulnerability DB" no SPA
 
 - [x] `internal/scanner/grypedb.go`: campo `Updating` no `DBStatus`
       (json `updating,omitempty`)
@@ -9,7 +9,7 @@
       payload de `/api/status`
 - [x] `web/index.html`: CSS/HTML da `.statusline` fixa na base + toggle em
       `refreshStatus` (`!SNAPSHOT && db.updating`), texto
-      "Atualizando DB de vulnerabilidades…" com dot pulsante
+      "Updating vulnerability DB…" com dot pulsante
 - [x] AGENTS.md (ideias concluídas)
 - [x] `make build`, `go vet ./...`, `go vet -tags integration ./...` e
       `make test`

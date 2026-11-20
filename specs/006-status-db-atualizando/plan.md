@@ -1,4 +1,4 @@
-# Plan: status line "Atualizando DB de vulnerabilidades" no SPA
+# Plan: status line "Updating vulnerability DB" no SPA
 
 ## Design
 

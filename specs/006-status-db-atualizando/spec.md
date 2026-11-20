@@ -1,4 +1,4 @@
-# Spec: status line "Atualizando DB de vulnerabilidades" no SPA
+# Spec: status line "Updating vulnerability DB" no SPA
 
 ## O quê
 
@@ -6,7 +6,7 @@ Enquanto o banco de vulnerabilidades do grype está sendo baixado/atualizado
 (na inicialização ou no refresh periódico), o SPA mostra uma status line
 no topo da página, no fluxo normal do documento (sem posicionamento fixo
 nem z-index próprio — ela empurra o conteúdo e não sobrepõe nada), com o
-texto "Atualizando DB de vulnerabilidades…". Quando a atualização termina,
+texto "Updating vulnerability DB…". Quando a atualização termina,
 a linha é removida.
 
 ## Por quê
@@ -25,8 +25,8 @@ que o app está quebrado.
    (`--db-refresh-interval`) também marca/desmarca o campo.
 3. O SPA mostra a status line no topo do `<body>` (antes do header), no
    fluxo normal — mesmo plano z do resto da página, sem `position`/
-   `z-index`, sem sobrepor o conteúdo — com o texto "Atualizando DB de
-   vulnerabilidades…" (indicador pulsante) enquanto `status.db.updating` é
+   `z-index`, sem sobrepor o conteúdo — com o texto "Updating vulnerability
+   DB…" (indicador pulsante) enquanto `status.db.updating` é
    true; remove quando vira false.
 4. A linha nunca aparece em snapshots exportados (dados congelados).
 5. Nenhuma mudança no comportamento do banner de erros (erros do DB

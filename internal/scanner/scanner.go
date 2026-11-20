@@ -24,6 +24,7 @@ import (
 	"github.com/anchore/grype/grype/matcher/stock"
 	"github.com/anchore/grype/grype/pkg"
 	"github.com/anchore/grype/grype/version"
+	"github.com/anchore/grype/grype/vex"
 	"github.com/anchore/grype/grype/vulnerability"
 	"github.com/anchore/stereoscope/pkg/image"
 	"github.com/anchore/syft/syft"
@@ -31,7 +32,9 @@ import (
 	"github.com/anchore/syft/syft/sbom"
 	"github.com/anchore/syft/syft/source"
 
+	"github.com/getupcloud/artifactor/internal/azure"
 	"github.com/getupcloud/artifactor/internal/ecr"
+	"github.com/getupcloud/artifactor/internal/gcp"
 	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/logx"
 	"github.com/getupcloud/artifactor/internal/registryauth"
@@ -68,6 +71,10 @@ type CVE struct {
 	URLs           []string `json:"urls,omitempty"`
 	DataSource     string   `json:"dataSource,omitempty"`
 	Matcher        string   `json:"matcher,omitempty"`
+	// VexStatus/VexFile mark a CVE that a VEX document ignored
+	// (not_affected or fixed): the status and the document that ignored it.
+	VexStatus string `json:"vexStatus,omitempty"`
+	VexFile   string `json:"vexFile,omitempty"`
 }
 
 // Result is the scan result for one image.
@@ -86,6 +93,13 @@ type Result struct {
 	Severities    map[string]int `json:"severities"`
 	SBOM          []byte         `json:"-"` // syft JSON SBOM of the image (used by --export-sbom)
 	Bytes         int64          `json:"-"` // bytes received for this image (compressed size pulled from the registry, or the SBOM file size)
+
+	// raw grype matches and package context of the image (pre-VEX), kept so
+	// the VEX documents can be re-applied without re-running the scan
+	// (no image pull, no DB access, no SBOM regeneration). Read-only after
+	// the result is stored; copies share the underlying matches.
+	matches    *match.Matches
+	pkgContext pkg.Context
 }
 
 // Summary is the API-facing projection of a Result.
@@ -178,6 +192,23 @@ func (s *Store) Put(r Result) {
 		r.StartedAt = prev.StartedAt
 	}
 	s.results[r.Image] = &r
+}
+
+// ReplaceCVEs replaces the CVEs of one image and recomputes the severity
+// counts (used by the VEX reprocessing, which re-applies the documents to
+// the stored matches without re-scanning).
+func (s *Store) ReplaceCVEs(img string, cves []CVE) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.results[img]
+	if !ok {
+		return
+	}
+	r.Cves = append([]CVE(nil), cves...)
+	r.Severities = map[string]int{}
+	for _, c := range cves {
+		r.Severities[c.Severity]++
+	}
 }
 
 func (s *Store) Summaries() []Summary {
@@ -306,12 +337,18 @@ type Options struct {
 	FromSBOM    string                 // path to an SBOM file or directory of SBOM files (non-recursive): run grype only, skipping syft
 	Provider    vulnerability.Provider // initial grype vulnerability DB provider (may be nil; set later via SetProvider)
 	ECR         *ecr.Provider          // AWS ECR credential provider via the AWS chain/IRSA (nil disables)
+	GCP         *gcp.Provider          // Google registry credential provider via GKE Workload Identity (nil disables)
+	Azure       *azure.Provider        // ACR credential provider via Microsoft Entra Workload ID (nil disables)
 	KeepSBOM    bool                   // retain the encoded syft SBOM per image in memory (needed by --export-sbom)
 	Insecure    bool                   // skip TLS certificate verification when pulling images (self-signed registry certs)
 	Platform    string
 	Timeout     time.Duration
 	Concurrency int
 	Store       *Store
+	// VexDocs holds the resolved VEX documents (OpenVEX or CSAF, already
+	// validated by ResolveVexFiles): the startup --vex files. The active
+	// set can be replaced at runtime with SetVexDocs (uploads via the UI).
+	VexDocs []VexDoc
 }
 
 // Scanner orchestrates discovery + syft/grype scanning of all cluster images.
@@ -320,6 +357,7 @@ type Scanner struct {
 	matchers []match.Matcher
 	mu       sync.RWMutex
 	provider vulnerability.Provider
+	vexDocs  []VexDoc // active VEX documents (startup + UI uploads)
 }
 
 func New(opts Options) *Scanner {
@@ -330,7 +368,23 @@ func New(opts Options) *Scanner {
 		opts:     opts,
 		matchers: defaultMatchers(),
 		provider: opts.Provider,
+		vexDocs:  append([]VexDoc(nil), opts.VexDocs...),
 	}
+}
+
+// SetVexDocs replaces the active VEX documents (the startup --vex files
+// plus the documents uploaded via the UI). Images scanned afterwards use
+// the new set; call ReprocessVex to re-apply it to the existing results.
+func (s *Scanner) SetVexDocs(docs []VexDoc) {
+	s.mu.Lock()
+	s.vexDocs = append([]VexDoc(nil), docs...)
+	s.mu.Unlock()
+}
+
+func (s *Scanner) currentVexDocs() []VexDoc {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]VexDoc(nil), s.vexDocs...)
 }
 
 // SetProvider replaces the grype vulnerability provider (e.g. once the DB
@@ -456,20 +510,34 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 	}
 	credentials := registryauth.CredentialsFor(merged, imageRef)
 
-	// AWS ECR images are usually pulled by the kubelet with node IAM roles
-	// (no pod imagePullSecret). When no pull-secret credential matched, fall
-	// back to the AWS credential chain (IRSA/pod identity) to mint a fresh
-	// registry token.
-	if len(credentials) == 0 && s.opts.ECR != nil {
-		if authority := registryauth.AuthorityForImage(imageRef); ecr.IsECRRegistry(authority) {
-			if username, password, err := s.opts.ECR.Credentials(ctx, authority); err != nil {
+	// Cloud workload identities: images are usually pulled by the kubelet
+	// with the pod/node identity (no pod imagePullSecret). When no
+	// pull-secret credential matched, mint short-lived registry tokens from
+	// the running identity — AWS ECR (chain/IRSA), Google registries (GKE
+	// Workload Identity) and Azure ACR (Microsoft Entra Workload ID).
+	if len(credentials) == 0 {
+		authority := registryauth.AuthorityForImage(imageRef)
+		switch {
+		case s.opts.ECR != nil && ecr.IsECRRegistry(authority):
+			username, password, err := s.opts.ECR.Credentials(ctx, authority)
+			if err != nil {
 				logx.Warnf("ecr credentials for %s: %v", authority, err)
 			} else {
-				credentials = append(credentials, image.RegistryCredentials{
-					Authority: authority,
-					Username:  username,
-					Password:  password,
-				})
+				credentials = append(credentials, image.RegistryCredentials{Authority: authority, Username: username, Password: password})
+			}
+		case s.opts.GCP != nil && gcp.IsGoogleRegistry(authority):
+			username, password, err := s.opts.GCP.Credentials(ctx)
+			if err != nil {
+				logx.Warnf("gcp credentials for %s: %v", authority, err)
+			} else {
+				credentials = append(credentials, image.RegistryCredentials{Authority: authority, Username: username, Password: password})
+			}
+		case s.opts.Azure != nil && azure.IsACRRegistry(authority):
+			username, password, err := s.opts.Azure.Credentials(ctx)
+			if err != nil {
+				logx.Warnf("azure credentials for %s: %v", authority, err)
+			} else {
+				credentials = append(credentials, image.RegistryCredentials{Authority: authority, Username: username, Password: password})
 			}
 		}
 	}
@@ -509,12 +577,16 @@ func (s *Scanner) scanImage(ctx context.Context, imageRef string, pullSecrets []
 
 	result.Artifacts = packageArtifacts(*sbo)
 
-	// 2. grype: match CVEs against the SBOM packages.
-	result.Cves, err = s.matchCVEs(ctx, packages, pkgContext)
+	// 2. grype: match CVEs against the SBOM packages. The raw matches are
+	//    kept for later VEX reprocessing (no rescan needed).
+	var matches *match.Matches
+	result.Cves, matches, err = s.matchCVEs(ctx, packages, pkgContext)
 	if err != nil {
 		result.Error = err.Error()
 		return result
 	}
+	result.matches = matches
+	result.pkgContext = pkgContext
 
 	result.Status = StatusScanned
 	now := time.Now().UTC()
@@ -540,11 +612,13 @@ func packageArtifacts(s sbom.SBOM) []Artifact {
 	return artifacts
 }
 
-// matchCVEs runs grype's vulnerability matcher over the given packages.
-func (s *Scanner) matchCVEs(ctx context.Context, packages []pkg.Package, pkgContext pkg.Context) ([]CVE, error) {
+// matchCVEs runs grype's vulnerability matcher over the given packages,
+// then applies the active VEX documents. The raw (pre-VEX) matches are
+// returned so the caller can store them for later VEX reprocessing.
+func (s *Scanner) matchCVEs(ctx context.Context, packages []pkg.Package, pkgContext pkg.Context) ([]CVE, *match.Matches, error) {
 	provider := s.Provider()
 	if provider == nil {
-		return nil, errors.New("vulnerability database unavailable (see /api/status)")
+		return nil, nil, errors.New("vulnerability database unavailable (see /api/status)")
 	}
 	vm := grype.VulnerabilityMatcher{
 		VulnerabilityProvider: provider,
@@ -553,30 +627,87 @@ func (s *Scanner) matchCVEs(ctx context.Context, packages []pkg.Package, pkgCont
 	}
 	matches, _, err := vm.FindMatchesContext(ctx, packages, pkgContext)
 	if err != nil {
-		return nil, fmt.Errorf("grype: %w", err)
+		return nil, nil, fmt.Errorf("grype: %w", err)
 	}
+	cves, err := applyVex(matches, pkgContext, s.currentVexDocs())
+	if err != nil {
+		return nil, nil, err
+	}
+	return cves, matches, nil
+}
 
+// ReprocessVex re-applies the active VEX documents to the stored matches
+// of every scanned image, without re-running the scan: no image pull, no
+// vulnerability DB access and no SBOM regeneration. Called after the VEX
+// set changes (files uploaded or removed via the UI).
+func (s *Scanner) ReprocessVex() error {
+	docs := s.currentVexDocs()
+	for _, res := range s.opts.Store.Snapshot("") {
+		if res.matches == nil {
+			continue
+		}
+		cves, err := applyVex(res.matches, res.pkgContext, docs)
+		if err != nil {
+			return err
+		}
+		s.opts.Store.ReplaceCVEs(res.Image, cves)
+	}
+	return nil
+}
+
+// applyVex applies the VEX documents to the matches: matches ignored by a
+// document (not_affected/fixed) are kept in the CVE list, marked with
+// their VEX status and the name of the document that ignored them (one
+// processor per document, applied in a chain — the grype library does not
+// expose the per-document origin when all documents are processed
+// together).
+func applyVex(matches *match.Matches, pkgContext pkg.Context, docs []VexDoc) ([]CVE, error) {
 	cves := []CVE{}
 	for _, m := range matches.Sorted() {
-		c := CVE{
-			ID:             m.Vulnerability.ID,
-			PackageName:    m.Package.Name,
-			PackageVersion: m.Package.Version,
-			PackageType:    string(m.Package.Type),
-			FixedIn:        m.Vulnerability.Fix.Versions,
-			Matcher:        matcherTypes(m.Details.Matchers()),
+		cves = append(cves, cveFromMatch(m))
+	}
+	remaining := matches
+	for _, doc := range docs {
+		p, err := vex.NewProcessor(vex.ProcessorOptions{Documents: []string{doc.Path}})
+		if err != nil {
+			return nil, fmt.Errorf("vex document %q: %w", doc.Path, err)
 		}
-		if md := m.Vulnerability.Metadata; md != nil {
-			c.Severity = normalizeSeverity(md.Severity)
-			c.Description = md.Description
-			c.URLs = md.URLs
-			c.DataSource = md.DataSource
-		} else {
-			c.Severity = "unknown"
+		var ignored []match.IgnoredMatch
+		remaining, ignored, err = p.ApplyVEX(&pkgContext, remaining, nil)
+		if err != nil {
+			return nil, fmt.Errorf("vex: %w", err)
 		}
-		cves = append(cves, c)
+		for _, im := range ignored {
+			c := cveFromMatch(im.Match)
+			if len(im.AppliedIgnoreRules) > 0 {
+				c.VexStatus = im.AppliedIgnoreRules[0].VexStatus
+			}
+			c.VexFile = doc.Name
+			cves = append(cves, c)
+		}
 	}
 	return cves, nil
+}
+
+// cveFromMatch projects one grype match into the API-facing CVE struct.
+func cveFromMatch(m match.Match) CVE {
+	c := CVE{
+		ID:             m.Vulnerability.ID,
+		PackageName:    m.Package.Name,
+		PackageVersion: m.Package.Version,
+		PackageType:    string(m.Package.Type),
+		FixedIn:        m.Vulnerability.Fix.Versions,
+		Matcher:        matcherTypes(m.Details.Matchers()),
+	}
+	if md := m.Vulnerability.Metadata; md != nil {
+		c.Severity = normalizeSeverity(md.Severity)
+		c.Description = md.Description
+		c.URLs = md.URLs
+		c.DataSource = md.DataSource
+	} else {
+		c.Severity = "unknown"
+	}
+	return c
 }
 
 // runFromSBOM scans the SBOM file(s) configured via Options.FromSBOM with
@@ -707,11 +838,14 @@ func (s *Scanner) scanSBOMFile(ctx context.Context, path string) Result {
 	}
 	result.Artifacts = packageArtifacts(*sbo)
 
-	result.Cves, err = s.matchCVEs(ctx, packages, pkgContext)
+	var matches *match.Matches
+	result.Cves, matches, err = s.matchCVEs(ctx, packages, pkgContext)
 	if err != nil {
 		result.Error = err.Error()
 		return result
 	}
+	result.matches = matches
+	result.pkgContext = pkgContext
 
 	result.Status = StatusScanned
 	now := time.Now().UTC()

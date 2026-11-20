@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/logx"
 	"github.com/getupcloud/artifactor/internal/scanner"
+	"github.com/getupcloud/artifactor/internal/vex"
 )
 
 // exportMarker is replaced with the embedded data snapshot when exporting.
@@ -64,6 +66,11 @@ type Options struct {
 	// Off by default so the package tests stay quiet; the real server
 	// enables it.
 	AccessLog bool
+	// VexDocs are the VEX documents resolved at startup (--vex); Vex is the
+	// in-memory registry of documents uploaded via the UI (nil in exports
+	// and tests, where no live VEX management happens).
+	VexDocs []scanner.VexDoc
+	Vex     *vex.Manager
 }
 
 // Server implements the HTTP API.
@@ -153,6 +160,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("POST /api/scan", s.handleScan)
 	mux.HandleFunc("POST /api/scan/cancel", s.handleCancelScan)
+	mux.HandleFunc("GET /api/vex", s.handleVexList)
+	mux.HandleFunc("POST /api/vex", s.handleAddVex)
+	mux.HandleFunc("DELETE /api/vex/{name}", s.handleRemoveVex)
+	mux.HandleFunc("GET /api/vex/{name}", s.handleVexDownload)
 	mux.HandleFunc("GET /", s.handleSPA)
 	if s.opts.AccessLog {
 		return AccessLog(mux)
@@ -348,12 +359,13 @@ func (s *Server) cveRows() []cveOut {
 	return out
 }
 
-// GET /api/cves?image=&artifact=&severity=&exclude=&id=&fixed=1&namespace=
+// GET /api/cves?image=&artifact=&severity=&exclude=&id=&fixed=1&namespace=&exclude-vex=1
 // severity accepts a comma-separated include list; exclude accepts a
 // comma-separated list of severities to drop (used by the SPA's severity
 // chips, which start all "on" and turn individual severities off); fixed=1
 // keeps only CVEs that have a fixed version available; namespace keeps only
-// CVEs whose affected images run in that namespace. artifact is a
+// CVEs whose affected images run in that namespace; exclude-vex=1 drops
+// CVEs ignored by a VEX document (vexStatus set). artifact is a
 // case-insensitive substring match against the syft artifact (package) name.
 func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.filteredCVEs(r.URL.Query()))
@@ -369,6 +381,7 @@ func (s *Server) filteredCVEs(q url.Values) []cveOut {
 	idFilters := strings.Fields(strings.ToLower(q.Get("id")))
 	artifactFilter := scanner.PackageNameFilter(q.Get("artifact"))
 	fixedOnly := q.Get("fixed") == "1"
+	excludeVex := q.Get("exclude-vex") == "1"
 
 	severities := map[string]struct{}{}
 	for _, sev := range strings.Split(q.Get("severity"), ",") {
@@ -405,6 +418,9 @@ func (s *Server) filteredCVEs(q url.Values) []cveOut {
 			continue
 		}
 		if fixedOnly && len(row.FixedIn) == 0 {
+			continue
+		}
+		if excludeVex && row.VexStatus != "" {
 			continue
 		}
 		if namespace != "" && !rowRunsInNamespace(row, namespace) {
@@ -918,6 +934,132 @@ func (s *Server) handleCancelScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "canceled"})
+}
+
+/* ---------- VEX documents (startup --vex + uploads via the UI) ---------- */
+
+// vexInfos returns the active VEX documents for the dialog: the startup
+// --vex documents first (not removable via the UI), then the uploads.
+func (s *Server) vexInfos() []vex.Info {
+	infos := []vex.Info{}
+	for _, d := range s.opts.VexDocs {
+		info, err := vex.InfoFromFile(d.Path, d.Name)
+		if err != nil {
+			logx.Warnf("vex document %s: %v", d.Path, err)
+			continue
+		}
+		infos = append(infos, info)
+	}
+	if s.opts.Vex != nil {
+		infos = append(infos, s.opts.Vex.List()...)
+	}
+	return infos
+}
+
+// GET /api/vex returns the active VEX documents (name, size, format,
+// summary and whether each one can be removed — never the contents).
+func (s *Server) handleVexList(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"files": s.vexInfos()})
+}
+
+// addVexRequest is the body of POST /api/vex.
+type addVexRequest struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+// maxVexSize bounds the body of POST /api/vex.
+const maxVexSize = 1 << 20 // 1 MiB
+
+// applyVexDocs pushes the current VEX set (startup docs + uploads) into the
+// scanner and reprocesses the stored matches (no rescan, no DB access).
+func (s *Server) applyVexDocs() error {
+	docs := append([]scanner.VexDoc(nil), s.opts.VexDocs...)
+	if s.opts.Vex != nil {
+		docs = append(docs, s.opts.Vex.Docs()...)
+	}
+	s.opts.Scanner.SetVexDocs(docs)
+	return s.opts.Scanner.ReprocessVex()
+}
+
+// POST /api/vex registers an uploaded OpenVEX/CSAF document and reprocesses
+// the CVE list with it (without re-scanning).
+func (s *Server) handleAddVex(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Vex == nil || s.opts.Scanner == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "vex management not available"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxVexSize)
+	var req addVexRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body: " + err.Error()})
+		return
+	}
+	for _, d := range s.opts.VexDocs {
+		if d.Name == req.Name {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "a startup --vex document with this name already exists"})
+			return
+		}
+	}
+	info, err := s.opts.Vex.Add(req.Name, []byte(req.Content))
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, vex.ErrDuplicate) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+	logx.Infof("vex document added: %s (%s, %d bytes)", info.Name, info.Format, info.Size)
+	if err := s.applyVexDocs(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "vex reprocess failed: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, info)
+}
+
+// DELETE /api/vex/{name} removes an uploaded document and reprocesses the
+// CVE list without it.
+func (s *Server) handleRemoveVex(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Vex == nil || s.opts.Scanner == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "vex management not available"})
+		return
+	}
+	if err := s.opts.Vex.Remove(r.PathValue("name")); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := s.applyVexDocs(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "vex reprocess failed: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+// GET /api/vex/{name} downloads the contents of a document (an upload or a
+// startup --vex file).
+func (s *Server) handleVexDownload(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Vex == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "vex management not available"})
+		return
+	}
+	name := r.PathValue("name")
+	content, err := s.opts.Vex.Content(name)
+	if err != nil {
+		for _, d := range s.opts.VexDocs {
+			if d.Name == name {
+				content, err = os.ReadFile(d.Path)
+				break
+			}
+		}
+	}
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(name, `"`, "")+`"`)
+	_, _ = w.Write(content)
 }
 
 func errString(err error) string {

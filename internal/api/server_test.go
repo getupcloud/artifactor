@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/getupcloud/artifactor/internal/clusters"
 	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/scanner"
+	"github.com/getupcloud/artifactor/internal/vex"
 )
 
 func testServer(t *testing.T) (*Server, *scanner.Store) {
@@ -190,6 +192,48 @@ func TestCVEFixedFilter(t *testing.T) {
 	// without the flag all 4 rows come back
 	if rows := getJSON(t, srv.Handler(), "/api/cves"); len(rows) != 4 {
 		t.Fatalf("unfiltered rows = %d, want 4", len(rows))
+	}
+}
+
+func TestCVEExcludeVexFilter(t *testing.T) {
+	store := scanner.NewStore()
+	store.SetImages([]string{"app:v1"})
+	store.Put(scanner.Result{
+		Image: "app:v1", Status: scanner.StatusScanned,
+		Cves: []scanner.CVE{
+			{ID: "CVE-2026-0001", Severity: "critical", VexStatus: "not_affected", VexFile: "vex/app.vex.json"},
+			{ID: "CVE-2026-0002", Severity: "high"},
+		},
+	})
+	srv := New(Options{Store: store, SPA: []byte("<!-- EXPORT_DATA -->")})
+
+	// without the filter the VEX-ignored CVE is still listed, with its fields
+	rows := getJSON(t, srv.Handler(), "/api/cves")
+	if len(rows) != 2 {
+		t.Fatalf("rows = %v, want 2", rows)
+	}
+	var vexed map[string]any
+	for _, r := range rows {
+		if r["id"] == "CVE-2026-0001" {
+			vexed = r
+		}
+	}
+	if vexed == nil {
+		t.Fatal("vex-marked CVE missing from /api/cves")
+	}
+	if vexed["vexStatus"] != "not_affected" || vexed["vexFile"] != "vex/app.vex.json" {
+		t.Errorf("vex fields = %v/%v, want not_affected + vex/app.vex.json", vexed["vexStatus"], vexed["vexFile"])
+	}
+
+	// exclude-vex=1 drops the VEX-ignored CVE (server-side, CSV included)
+	rows = getJSON(t, srv.Handler(), "/api/cves?exclude-vex=1")
+	if len(rows) != 1 || rows[0]["id"] != "CVE-2026-0002" {
+		t.Fatalf("exclude-vex=1 rows = %v, want only CVE-2026-0002", rows)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/cves.csv?exclude-vex=1", nil))
+	if strings.Contains(rec.Body.String(), "CVE-2026-0001") {
+		t.Errorf("csv with exclude-vex=1 still contains the vex-ignored CVE:\n%s", rec.Body.String())
 	}
 }
 
@@ -1100,5 +1144,147 @@ func TestAccessLog(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ok", nil))
 	if rec.Body.String() != "hello" || rec.Code != http.StatusOK {
 		t.Errorf("response = %d %q, want 200 \"hello\"", rec.Code, rec.Body.String())
+	}
+}
+
+func TestVexEndpoints(t *testing.T) {
+	store := scanner.NewStore()
+	store.SetImages([]string{"app:v1"})
+	srv := New(Options{
+		Store:   store,
+		SPA:     []byte("<!-- EXPORT_DATA -->"),
+		Scanner: scanner.New(scanner.Options{Store: store}),
+		Vex:     vex.New(),
+	})
+
+	// the list starts empty
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/vex", nil))
+	if !strings.Contains(rec.Body.String(), `"files":[]`) {
+		t.Fatalf("initial vex list = %s", rec.Body.String())
+	}
+
+	// adding a valid OpenVEX document reprocesses and lists it
+	doc := `{"@context":"https://openvex.dev/ns/v0.2.0","@id":"https://example.com/vex","author":"test","timestamp":"2026-11-19T00:00:00Z","version":1,"statements":[]}`
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/vex",
+		strings.NewReader(`{"name":"app.vex.json","content":`+strconv.Quote(doc)+`}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("add vex = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/vex", nil))
+	if !strings.Contains(rec.Body.String(), "app.vex.json") || !strings.Contains(rec.Body.String(), `"format":"openvex"`) {
+		t.Fatalf("vex list after add = %s", rec.Body.String())
+	}
+
+	// duplicate name → 409; invalid content → 400
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/vex",
+		strings.NewReader(`{"name":"app.vex.json","content":`+strconv.Quote(doc)+`}`)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate vex = %d, want 409", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/vex",
+		strings.NewReader(`{"name":"bad.txt","content":"not a vex document"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid vex = %d, want 400", rec.Code)
+	}
+
+	// download round-trips the content; unknown name → 404
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/vex/app.vex.json", nil))
+	if rec.Body.String() != doc {
+		t.Fatalf("download = %q", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/vex/nope.json", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("download unknown = %d, want 404", rec.Code)
+	}
+
+	// delete removes it and reprocesses; the download then 404s
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/vex/app.vex.json", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete vex = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/vex", nil))
+	if !strings.Contains(rec.Body.String(), `"files":[]`) {
+		t.Fatalf("vex list after delete = %s", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/vex/app.vex.json", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("download after delete = %d, want 404", rec.Code)
+	}
+
+	// without a scanner the endpoints are unavailable
+	srv.opts.Scanner = nil
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/vex", strings.NewReader(`{"name":"x","content":"y"}`)))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("add without scanner = %d, want 503", rec.Code)
+	}
+}
+
+func TestVexStartupDocs(t *testing.T) {
+	store := scanner.NewStore()
+	store.SetImages([]string{"app:v1"})
+	path := filepath.Join(t.TempDir(), "startup.vex.json")
+	doc := `{"@context":"https://openvex.dev/ns/v0.2.0","@id":"https://example.com/vex","author":"test","timestamp":"2026-11-19T00:00:00Z","version":1,"statements":[]}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Options{
+		Store:   store,
+		SPA:     []byte("<!-- EXPORT_DATA -->"),
+		Scanner: scanner.New(scanner.Options{Store: store}),
+		Vex:     vex.New(),
+		VexDocs: []scanner.VexDoc{{Path: path, Name: "startup.vex.json"}},
+	})
+
+	// the startup document is listed, marked as not removable
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/vex", nil))
+	if !strings.Contains(rec.Body.String(), "startup.vex.json") || !strings.Contains(rec.Body.String(), `"removable":false`) {
+		t.Fatalf("vex list with startup doc = %s", rec.Body.String())
+	}
+
+	// download serves the startup file contents
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/vex/startup.vex.json", nil))
+	if rec.Body.String() != doc {
+		t.Fatalf("startup doc download = %q", rec.Body.String())
+	}
+
+	// startup documents cannot be removed via the API
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/vex/startup.vex.json", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("delete startup doc = %d, want 404", rec.Code)
+	}
+
+	// uploads cannot collide with a startup document name
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/vex",
+		strings.NewReader(`{"name":"startup.vex.json","content":`+strconv.Quote(doc)+`}`)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("upload colliding with startup doc = %d, want 409", rec.Code)
+	}
+
+	// uploads are listed as removable alongside the startup doc
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/vex",
+		strings.NewReader(`{"name":"app.vex.json","content":`+strconv.Quote(doc)+`}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("add vex = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/vex", nil))
+	if !strings.Contains(rec.Body.String(), `"removable":true`) {
+		t.Fatalf("vex list after upload = %s", rec.Body.String())
 	}
 }

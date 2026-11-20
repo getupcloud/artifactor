@@ -25,13 +25,16 @@ import (
 	flag "github.com/spf13/pflag" // flags defined and displayed with --
 
 	"github.com/getupcloud/artifactor/internal/api"
+	"github.com/getupcloud/artifactor/internal/azure"
 	"github.com/getupcloud/artifactor/internal/clusters"
 	"github.com/getupcloud/artifactor/internal/ecr"
+	"github.com/getupcloud/artifactor/internal/gcp"
 	"github.com/getupcloud/artifactor/internal/k8s"
 	"github.com/getupcloud/artifactor/internal/logx"
 	"github.com/getupcloud/artifactor/internal/metrics"
 	"github.com/getupcloud/artifactor/internal/scanner"
 	"github.com/getupcloud/artifactor/internal/selfupdate"
+	"github.com/getupcloud/artifactor/internal/vex"
 )
 
 var version = "dev"
@@ -111,6 +114,7 @@ func runScanCmd(args []string) {
 		exportTar          = fs.String("export-tar", "", "internal: create a .tar.gz of the export directory at this path (used by the in-cluster scan pod)")
 		hold               = fs.Bool("hold", false, "internal: keep the container alive after the export completes (used by the in-cluster scan pod)")
 		fromSBOM           = fs.String("from-sbom", envStr("FROM_SBOM", ""), "scan an SBOM file or all files of a directory (non-recursive) with grype only, skipping syft and image download")
+		vexPaths           = fs.StringArray("vex", nil, "path to a VEX document (OpenVEX or CSAF) or a directory of VEX documents (non-recursive); repeatable, all documents are combined")
 		dbRefresh          = fs.Duration("db-refresh-interval", envDuration("DB_REFRESH_INTERVAL", 24*time.Hour), "check for grype DB updates on this interval while running (0 disables)")
 		platform           = fs.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
 		scanTimeout        = fs.Duration("scan-timeout", envDuration("SCAN_TIMEOUT", 15*time.Minute), "per-image scan timeout")
@@ -121,6 +125,8 @@ func runScanCmd(args []string) {
 		exportCSV          = fs.String("export-csv", envStr("EXPORT_CSV", ""), "run a scan, export the CVE report as CSV to this file, and exit")
 		openReport         = fs.String("open", envStr("OPEN", ""), "open the exported scan.html with this command after --export (default \"xdg-open\"; ${FILE} is replaced by the path)")
 		ecrAuth            = fs.Bool("ecr-auth", envBool("ECR_AUTH", true), "authenticate to AWS ECR registries via the AWS credential chain (IRSA) when no pull secret matches")
+		gcpAuth            = fs.Bool("gcp-auth", envBool("GCP_AUTH", true), "authenticate to Google registries (gcr.io/Artifact Registry) via GKE Workload Identity when no pull secret matches")
+		azureAuth          = fs.Bool("azure-auth", envBool("AZURE_AUTH", true), "authenticate to Azure Container Registry via Microsoft Entra Workload ID when no pull secret matches")
 		keepSBOM           = fs.Bool("keep-sbom", envBool("KEEP_SBOM", true), "keep the syft SBOM of each image in memory (needed by --export-sbom; disable to save memory)")
 		insecure           = fs.Bool("insecure-skip-tls", envBool("INSECURE_SKIP_TLS", false), "skip TLS certificate verification for remote servers (image registries, the vulnerability-name refresh and direct grype DB downloads)")
 		customerName       = fs.String("customer-name", os.Getenv("CUSTOMER_NAME"), "customer name shown in the execution logs and report title")
@@ -163,6 +169,20 @@ func runScanCmd(args []string) {
 		fatalf("--metrics-listen: %v", err)
 	}
 
+	// VEX documents: repeatable --vex flag plus the comma-separated VEX env.
+	if env := os.Getenv("VEX"); env != "" {
+		*vexPaths = append(*vexPaths, splitNamespaces(env)...)
+	}
+	vexFiles, err := scanner.ResolveVexFiles(*vexPaths)
+	if err != nil {
+		fatalf("--vex: %v", err)
+	}
+	vexDocs := make([]scanner.VexDoc, len(vexFiles))
+	for i, f := range vexFiles {
+		vexDocs[i] = scanner.VexDoc{Path: f, Name: filepath.Base(f)}
+		logx.Infof("vex document loaded: %s", f)
+	}
+
 	resources, err := parsePodResources(*inClusterResources)
 	if err != nil {
 		fatalf("--in-cluster-resources: %v", err)
@@ -197,6 +217,7 @@ func runScanCmd(args []string) {
 			ClusterName:     *clusterName,
 			LogLevel:        *logLevel,
 			FromSBOM:        *fromSBOM,
+			VexFiles:        vexFiles,
 			ExportHTML:      *exportHTML,
 			ExportSBOM:      *exportSBOM,
 			ExportGrype:     *exportGrype,
@@ -219,7 +240,7 @@ func runScanCmd(args []string) {
 			allDir:   *exportAll,
 			csvPath:  *exportCSV,
 			tarPath:  *exportTar,
-		}, *dbDir, *dbUpdate, *dbCaCert, *dbDirect, *ignoreDB, *fromSBOM, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *keepSBOM, *insecure, *customerName, *clusterName, *openReport)
+		}, *dbDir, *dbUpdate, *dbCaCert, *dbDirect, *ignoreDB, *fromSBOM, vexDocs, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *gcpAuth, *azureAuth, *keepSBOM, *insecure, *customerName, *clusterName, *openReport)
 		if err != nil {
 			fatalf("export: %v", err)
 		}
@@ -276,18 +297,29 @@ func runScanCmd(args []string) {
 	if *ecrAuth {
 		ecrProvider = ecr.NewProvider()
 	}
+	var gcpProvider *gcp.Provider
+	if *gcpAuth {
+		gcpProvider = gcp.NewProvider()
+	}
+	var azureProvider *azure.Provider
+	if *azureAuth {
+		azureProvider = azure.NewProvider()
+	}
 	var sc *scanner.Scanner
 	if *fromSBOM != "" || k8sErr == nil {
 		sc = scanner.New(scanner.Options{
 			Namespaces:  namespaces,
 			FromSBOM:    *fromSBOM,
 			ECR:         ecrProvider,
+			GCP:         gcpProvider,
+			Azure:       azureProvider,
 			KeepSBOM:    *keepSBOM,
 			Insecure:    *insecure,
 			Platform:    *platform,
 			Timeout:     *scanTimeout,
 			Concurrency: *concurrency,
 			Store:       store,
+			VexDocs:     vexDocs,
 		})
 	}
 
@@ -310,6 +342,8 @@ func runScanCmd(args []string) {
 			return dbStatus
 		},
 		AccessLog: true,
+		VexDocs:   vexDocs,
+		Vex:       vex.New(),
 	})
 
 	httpServer := &http.Server{
@@ -520,7 +554,7 @@ func runCatCmd(args []string) {
 
 // runExport implements the --export* flags: prepare the DB, scan every image
 // once, write the requested artifacts, and exit.
-func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, dbCaCert string, dbDirect, ignoreDB bool, fromSBOM string, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, keepSBOM, insecure bool, customerName, clusterName, openCmd string) error {
+func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, dbCaCert string, dbDirect, ignoreDB bool, fromSBOM string, vexDocs []scanner.VexDoc, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, gcpAuth, azureAuth, keepSBOM, insecure bool, customerName, clusterName, openCmd string) error {
 	if req.tarPath != "" && req.allDir == "" {
 		return fmt.Errorf("--export-tar requires --export <dir>")
 	}
@@ -565,6 +599,14 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 	if ecrAuth {
 		ecrProvider = ecr.NewProvider()
 	}
+	var gcpProvider *gcp.Provider
+	if gcpAuth {
+		gcpProvider = gcp.NewProvider()
+	}
+	var azureProvider *azure.Provider
+	if azureAuth {
+		azureProvider = azure.NewProvider()
+	}
 	// SBOM exports need the SBOM retained in memory; force it on when the
 	// user asked for sbom/complete exports.
 	if (req.sbomDir != "" || req.allDir != "") && !keepSBOM {
@@ -576,12 +618,15 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		FromSBOM:    fromSBOM,
 		Provider:    provider,
 		ECR:         ecrProvider,
+		GCP:         gcpProvider,
+		Azure:       azureProvider,
 		KeepSBOM:    keepSBOM,
 		Insecure:    insecure,
 		Platform:    platform,
 		Timeout:     scanTimeout,
 		Concurrency: concurrency,
 		Store:       store,
+		VexDocs:     vexDocs,
 	})
 
 	if fromSBOM != "" {

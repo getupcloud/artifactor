@@ -6,7 +6,7 @@ Los resultados se presentan en una **SPA** (Single-Page Application) que permite
 
 > [!IMPORTANT]
 > El comando debe ejecutarse desde una máquina con acceso tanto a la API del clúster (mediante el `kubeconfig`) como a los **registros de imágenes** de contenedores que se ejecutan en el clúster.
-> Las credenciales de cada registro se recogen durante la ejecución a partir del campo `imagePullSecrets` de cada Pod, o mediante `IRSA` en clústeres EKS.
+> Las credenciales de cada registro se recogen durante la ejecución a partir del campo `imagePullSecrets` de cada Pod, o mediante las identidades de workload de la nube: `IRSA` en EKS, **GKE Workload Identity** y **Microsoft Entra Workload ID** (AKS).
 
 ## TL;DR;
 
@@ -120,6 +120,13 @@ Para integrarse con el Prometheus Operator, `artifactor install --service-monito
 
 - **ArtifactorImageCriticalCVEs** y **ArtifactorImageHighCVEs**: se disparan cuando una imagen tiene CVEs `critical` o `high` (persistencia de 5m), enrutadas con la etiqueta `severity` y anotadas con el workload, el namespace, el recuento de CVEs y el último escaneo.
 
+## VEX (Vulnerability Exploitability eXchange)
+
+Artifactor acepta **documentos VEX** (**OpenVEX** o **CSAF**) que marcan CVEs como `not_affected` o `fixed`, reduciendo el ruido de alertas/triaje para CVEs que no aplican a una imagen (componente no usado, versión no explotable, etc.).
+
+- **CLI**: `--vex <fichero|dir>` (repetible; env `VEX`, separada por comas) carga documentos en el arranque — un directorio aporta todos sus ficheros directos (no recursivo); una ruta inexistente o un formato no soportado falla en el arranque. Se rechaza junto con `--in-cluster` (los ficheros son locales). Los CVEs ignorados siguen apareciendo en la SPA, marcados con un **badge VEX** y el nombre del fichero que los ignoró; el checkbox "**Hide VEX excluded**" los oculta (también aplica al CSV y al snapshot exportado).
+- **UI**: los botones **+ Add VEX** y **VEX files** (cluster bar) suben documentos OpenVEX/CSAF (≤ 1 MiB) **sin reiniciar**: al añadir/eliminar, los matches de CVE ya calculados se reprocesan al momento — sin reescaneo, sin reconstruir el SBOM, sin pull de imagen. El diálogo "VEX files" lista los documentos con resumen y permite seleccionar, copiar (Ctrl+C), descargar y eliminar cada uno — los documentos `--vex` del arranque también aparecen en el diálogo (copiar/descargar), pero no pueden eliminarse desde la UI. Los ficheros subidos permanecen **solo en memoria** (+ un fichero temporal para el procesador de grype) — la API nunca devuelve su contenido, salvo en la descarga explícita.
+
 ## Variables / flags
 
 | Flag | Env | Default | Descripción |
@@ -142,6 +149,9 @@ Para integrarse con el Prometheus Operator, `artifactor install --service-monito
 | `--openshift` | `OPENSHIFT` | `false` | con `--in-cluster`: aplica los manifests de OpenShift/OKD (`SecurityContextConstraints` + RBAC) que permiten ejecutar el pod de escaneo (requiere cluster-admin) |
 | `--platform` | `PLATFORM` | `linux/<GOARCH>` | plataforma de la imagen a escanear |
 | `--scan-timeout` | `SCAN_TIMEOUT` | `15m` | timeout por imagen |
+| `--gcp-auth` | `GCP_AUTH` | `true` | autentica en registros de Google (`gcr.io`/Artifact Registry `*.pkg.dev`) mediante **GKE Workload Identity** (access token del metadata server) cuando ningún pull secret coincide |
+| `--azure-auth` | `AZURE_AUTH` | `true` | autentica en Azure Container Registry (`*.azurecr.io`) mediante **Microsoft Entra Workload ID** (intercambio federado de AKS, envs `AZURE_*`) cuando ningún pull secret coincide |
+| `--vex <fichero\|dir>` | `VEX` | — | carga documentos OpenVEX/CSAF que marcan CVEs como `not_affected`/`fixed` (repetible; un directorio aporta sus ficheros directos); rechazado con `--in-cluster` |
 | `--export-html <fichero>` | `EXPORT_HTML` | — | escanea una vez, exporta el informe como un único HTML autocontenido y termina |
 | `--export-sbom <dir>` | `EXPORT_SBOM` | — | escanea una vez, exporta un SBOM syft (syft-json) por imagen en el directorio y termina |
 | `--export-grype <dir>` | `EXPORT_GRYPE` | — | escanea una vez, exporta un informe grype (JSON) por imagen en el directorio y termina |

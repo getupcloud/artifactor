@@ -7,7 +7,7 @@
 - Estado: `state.backendError` (null = sem erro).
 - Helper `renderStatusLine()` centraliza a decisão da linha:
   1. snapshot → sempre escondida;
-  2. `state.backendError` → `<dot error> Erro de conexão com o backend:
+  2. `state.backendError` → `<dot error> Backend connection error:
      <mensagem escapada via esc()>` + classe `error`;
   3. `status.db.updating` → mensagem atual de atualização do DB (dot
      pulsante, sem `error`);

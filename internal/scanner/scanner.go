@@ -133,6 +133,7 @@ type Store struct {
 	results      map[string]*Result
 	images       []string
 	scanning     bool
+	discovering  bool               // true while a scan run is in its discovery phase
 	scanCancel   context.CancelFunc // cancels the running scan (nil when idle)
 	lastScanDone *time.Time
 	dbError      string
@@ -295,6 +296,21 @@ func (s *Store) IsScanning() bool {
 	return s.scanning
 }
 
+// SetDiscovering marks whether a scan run is in its discovery phase (the
+// cluster API is being listed; no image is being scanned yet).
+func (s *Store) SetDiscovering(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.discovering = v
+}
+
+// IsDiscovering reports whether a scan run is in its discovery phase.
+func (s *Store) IsDiscovering() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.discovering
+}
+
 func (s *Store) LastScanDone() *time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -333,18 +349,19 @@ func (s *Store) DBError() string {
 
 // Options configures a Scanner.
 type Options struct {
-	Namespaces  []string               // restrict scanning to these namespaces (empty = all)
-	FromSBOM    string                 // path to an SBOM file or directory of SBOM files (non-recursive): run grype only, skipping syft
-	Provider    vulnerability.Provider // initial grype vulnerability DB provider (may be nil; set later via SetProvider)
-	ECR         *ecr.Provider          // AWS ECR credential provider via the AWS chain/IRSA (nil disables)
-	GCP         *gcp.Provider          // Google registry credential provider via GKE Workload Identity (nil disables)
-	Azure       *azure.Provider        // ACR credential provider via Microsoft Entra Workload ID (nil disables)
-	KeepSBOM    bool                   // retain the encoded syft SBOM per image in memory (needed by --export-sbom)
-	Insecure    bool                   // skip TLS certificate verification when pulling images (self-signed registry certs)
-	Platform    string
-	Timeout     time.Duration
-	Concurrency int
-	Store       *Store
+	Namespaces    []string               // restrict scanning to these namespaces (empty = all)
+	LabelSelector string                 // restrict discovery to pods matching this Kubernetes label selector (empty = all)
+	FromSBOM      string                 // path to an SBOM file or directory of SBOM files (non-recursive): run grype only, skipping syft
+	Provider      vulnerability.Provider // initial grype vulnerability DB provider (may be nil; set later via SetProvider)
+	ECR           *ecr.Provider          // AWS ECR credential provider via the AWS chain/IRSA (nil disables)
+	GCP           *gcp.Provider          // Google registry credential provider via GKE Workload Identity (nil disables)
+	Azure         *azure.Provider        // ACR credential provider via Microsoft Entra Workload ID (nil disables)
+	KeepSBOM      bool                   // retain the encoded syft SBOM per image in memory (needed by --export-sbom)
+	Insecure      bool                   // skip TLS certificate verification when pulling images (self-signed registry certs)
+	Platform      string
+	Timeout       time.Duration
+	Concurrency   int
+	Store         *Store
 	// VexDocs holds the resolved VEX documents (OpenVEX or CSAF, already
 	// validated by ResolveVexFiles): the startup --vex files. The active
 	// set can be replaced at runtime with SetVexDocs (uploads via the UI).
@@ -427,7 +444,9 @@ func (s *Scanner) RunOnce(ctx context.Context, client *k8s.Client) error {
 	}
 
 	start := time.Now()
-	disc, err := client.Discover(ctx, s.opts.Namespaces)
+	s.opts.Store.SetDiscovering(true)
+	disc, err := client.Discover(ctx, s.opts.Namespaces, s.opts.LabelSelector)
+	s.opts.Store.SetDiscovering(false)
 	if err != nil {
 		return fmt.Errorf("discover images: %w", err)
 	}

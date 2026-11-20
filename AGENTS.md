@@ -157,7 +157,9 @@
   VEX sobre os **matches crus guardados por imagem** (sem pull, sem DB,
   sem refazer SBOM); diálogo com resumo, seleção, copy (Ctrl+C), download
   e remove. Arquivos enviados ficam só em memória (+ temp file).
-- Discovery/scan: `--namespace a,b`, `--scan-interval`, `--concurrency`,
+- Discovery/scan: `--namespace a,b`, `--label-selector <sel>` (filtra os
+  pods do discovery por label selector do Kubernetes; vazio = todos),
+  `--scan-interval`, `--concurrency`,
   `--scan-timeout`, `--platform`, `--keep-sbom`, `--ecr-auth`, `--gcp-auth`
   (GKE Workload Identity), `--azure-auth` (Entra Workload ID),
   `--insecure-skip-tls` (registries, refresh do names.json e downloads
@@ -203,6 +205,9 @@
   serve HTTP (nunca em `--in-cluster`/exports); porta inválida é fatal no
   startup; bind falho vira aviso e o scan segue (o deployment expõe a porta
   9090 como `metrics` no Service).
+- `--access-log` (env `ACCESS_LOG`, default `false`) — liga/desliga o
+  access log dos servidores HTTP (SPA/API e métricas); o deployment
+  instalado roda com `ACCESS_LOG=true`.
 - `--help`/`-h`/`help` na raiz lista os subcomandos.
 
 ## 6. Banco de vulnerabilidades do grype — conhecimento crítico
@@ -256,6 +261,8 @@
   métricas) — `http: <método> <path> <status> <duração> <bytes>B <remote>`
   — via middleware `api.AccessLog` (status/bytes capturados por writer
   wrapper, duração em ms/µs); `GET /healthz` (probes do K8s) é pulado.
+  Habilitado por `--access-log` (env `ACCESS_LOG`, default false); o
+  deployment instalado usa `ACCESS_LOG=true`.
 - Mensagens de commit: resumo curto imperativo em inglês + corpo;
   trailer `Co-Authored-By` no final (veja o git log).
 - NÃO sobrescrever a identidade git repo-local (Mateus Caruccio
@@ -309,9 +316,10 @@
   DB, política fail-fast do DB, formato de log com arquivo:linha, check de
   atualização de versão no início do scan, gerenciamento de clusters no SPA,
   cancelamento do scan pela UI, auto-open do SPA no navegador, métricas
-  Prometheus em `--metrics-listen` 0.0.0.0:9090, status line
-  "Updating vulnerability DB" no SPA (`db.updating` no status),
-  "Backend connection error" na mesma status line do SPA, access log
+  Prometheus em `--metrics-listen` 0.0.0.0:9090, status line permanente no
+  SPA (fases do scan "Discovering/Scanning images" — `discovering` no
+  status —, "Updating vulnerability DB" (`db.updating` no status),
+  "Backend connection error" e Idle), access log
   dos servidores HTTP (SPA, API e métricas), suporte a VEX (`--vex`,
   indicador e filtro no SPA), gestão de VEX na UI (upload + reprocessamento
   sem rescan + diálogo com copy/download), GKE Workload Identity

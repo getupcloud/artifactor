@@ -1100,6 +1100,19 @@ func TestStatusEndpoint(t *testing.T) {
 	if db["updating"] != true {
 		t.Errorf("db updating = %v, want true", db["updating"])
 	}
+
+	// the discovery phase flows through to the status payload
+	if status["discovering"] != false {
+		t.Errorf("discovering = %v, want false", status["discovering"])
+	}
+	store.SetDiscovering(true)
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	_ = json.Unmarshal(rec.Body.Bytes(), &status)
+	if status["discovering"] != true {
+		t.Errorf("discovering = %v, want true", status["discovering"])
+	}
+	store.SetDiscovering(false)
 }
 
 func TestAccessLog(t *testing.T) {

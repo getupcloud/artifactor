@@ -51,6 +51,7 @@ type inClusterOpts struct {
 	ImagePullPolicy string
 	Resources       corev1.ResourceRequirements
 	Namespaces      []string
+	LabelSelector   string
 	Concurrency     int
 	DBAutoUpdate    bool
 	DBCACert        string
@@ -59,6 +60,8 @@ type inClusterOpts struct {
 	Platform        string
 	ScanTimeout     time.Duration
 	ECRAuth         bool
+	GCPAuth         bool
+	AzureAuth       bool
 	KeepSBOM        bool
 	Insecure        bool
 	CustomerName    string
@@ -544,6 +547,8 @@ func scanPodArgs(o inClusterOpts) []string {
 		"--scan-timeout=" + o.ScanTimeout.String(),
 		"--keep-sbom=" + strconv.FormatBool(o.KeepSBOM),
 		"--ecr-auth=" + strconv.FormatBool(o.ECRAuth),
+		"--gcp-auth=" + strconv.FormatBool(o.GCPAuth),
+		"--azure-auth=" + strconv.FormatBool(o.AzureAuth),
 		"--log-level=" + o.LogLevel,
 	}
 	if o.Insecure {
@@ -557,6 +562,9 @@ func scanPodArgs(o inClusterOpts) []string {
 	}
 	if len(o.Namespaces) > 0 {
 		args = append(args, "--namespace="+strings.Join(o.Namespaces, ","))
+	}
+	if o.LabelSelector != "" {
+		args = append(args, "--label-selector="+o.LabelSelector)
 	}
 	if o.CustomerName != "" {
 		args = append(args, "--customer-name="+o.CustomerName)

@@ -263,6 +263,7 @@ func (s *Server) statusPayload() map[string]any {
 		"mode":            mode,
 		"k8sError":        errString(s.opts.K8sErr),
 		"scanning":        s.opts.Store.IsScanning(),
+		"discovering":     s.opts.Store.IsDiscovering(),
 		"lastScanDone":    s.opts.Store.LastScanDone(),
 		"lastScan":        s.opts.Store.Stats(),
 		"customer":        s.opts.CustomerName,

@@ -55,6 +55,10 @@ spec:
             # drop the per-image SBOM bytes to save memory
             - name: KEEP_SBOM
               value: "false"
+            # the installed deployment logs one line per HTTP request
+            # (SPA/API and metrics); local runs default to off (--access-log)
+            - name: ACCESS_LOG
+              value: "true"
             # path to a PEM CA certificate for the grype DB download server
             # (set by `install --db-ca-cert`)
             - name: DB_CA_CERT

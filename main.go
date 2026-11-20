@@ -96,7 +96,9 @@ func runScanCmd(args []string) {
 	var (
 		port               = fs.Int("port", envInt("PORT", 8080), "HTTP listen port")
 		metricsListen      = fs.String("metrics-listen", envStr("METRICS_LISTEN", ""), "listen address of the Prometheus metrics endpoint (GET /metrics): [ip][:port], both optional (defaults 0.0.0.0:9090)")
+		accessLog          = fs.Bool("access-log", envBool("ACCESS_LOG", false), "log one line per HTTP request on the SPA/API and metrics servers (GET /healthz is skipped)")
 		namespaceCSV       = fs.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in these namespaces (comma-separated list; empty = all namespaces)")
+		labelSelector      = fs.String("label-selector", os.Getenv("LABEL_SELECTOR"), "only scan pods matching this Kubernetes label selector (empty = all pods)")
 		interval           = fs.Duration("scan-interval", envDuration("SCAN_INTERVAL", 0), "automatic rescan interval (0 disables)")
 		concurrency        = fs.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
 		dbDir              = fs.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
@@ -203,6 +205,7 @@ func runScanCmd(args []string) {
 			ImagePullPolicy: *imagePullPolicy,
 			Resources:       resources,
 			Namespaces:      namespaces,
+			LabelSelector:   *labelSelector,
 			Concurrency:     *concurrency,
 			DBAutoUpdate:    *dbUpdate,
 			DBCACert:        *dbCaCert,
@@ -211,6 +214,8 @@ func runScanCmd(args []string) {
 			Platform:        *platform,
 			ScanTimeout:     *scanTimeout,
 			ECRAuth:         *ecrAuth,
+			GCPAuth:         *gcpAuth,
+			AzureAuth:       *azureAuth,
 			KeepSBOM:        *keepSBOM,
 			Insecure:        *insecure,
 			CustomerName:    *customerName,
@@ -240,7 +245,7 @@ func runScanCmd(args []string) {
 			allDir:   *exportAll,
 			csvPath:  *exportCSV,
 			tarPath:  *exportTar,
-		}, *dbDir, *dbUpdate, *dbCaCert, *dbDirect, *ignoreDB, *fromSBOM, vexDocs, namespaces, *platform, *scanTimeout, *concurrency, *ecrAuth, *gcpAuth, *azureAuth, *keepSBOM, *insecure, *customerName, *clusterName, *openReport)
+		}, *dbDir, *dbUpdate, *dbCaCert, *dbDirect, *ignoreDB, *fromSBOM, vexDocs, namespaces, *labelSelector, *platform, *scanTimeout, *concurrency, *ecrAuth, *gcpAuth, *azureAuth, *keepSBOM, *insecure, *customerName, *clusterName, *openReport)
 		if err != nil {
 			fatalf("export: %v", err)
 		}
@@ -308,18 +313,19 @@ func runScanCmd(args []string) {
 	var sc *scanner.Scanner
 	if *fromSBOM != "" || k8sErr == nil {
 		sc = scanner.New(scanner.Options{
-			Namespaces:  namespaces,
-			FromSBOM:    *fromSBOM,
-			ECR:         ecrProvider,
-			GCP:         gcpProvider,
-			Azure:       azureProvider,
-			KeepSBOM:    *keepSBOM,
-			Insecure:    *insecure,
-			Platform:    *platform,
-			Timeout:     *scanTimeout,
-			Concurrency: *concurrency,
-			Store:       store,
-			VexDocs:     vexDocs,
+			Namespaces:    namespaces,
+			LabelSelector: *labelSelector,
+			FromSBOM:      *fromSBOM,
+			ECR:           ecrProvider,
+			GCP:           gcpProvider,
+			Azure:         azureProvider,
+			KeepSBOM:      *keepSBOM,
+			Insecure:      *insecure,
+			Platform:      *platform,
+			Timeout:       *scanTimeout,
+			Concurrency:   *concurrency,
+			Store:         store,
+			VexDocs:       vexDocs,
 		})
 	}
 
@@ -341,7 +347,7 @@ func runScanCmd(args []string) {
 			defer dbMu.RUnlock()
 			return dbStatus
 		},
-		AccessLog: true,
+		AccessLog: *accessLog,
 		VexDocs:   vexDocs,
 		Vex:       vex.New(),
 	})
@@ -361,9 +367,13 @@ func runScanCmd(args []string) {
 	// Prometheus metrics on a dedicated listen address (--metrics-listen,
 	// defaults 0.0.0.0:9090). A bind failure must not take the SPA down:
 	// warn and continue without metrics.
+	var metricsHandler http.Handler = metrics.New(store)
+	if *accessLog {
+		metricsHandler = api.AccessLog(metricsHandler)
+	}
 	metricsServer := &http.Server{
 		Addr:              metricsAddr,
-		Handler:           api.AccessLog(metrics.New(store)),
+		Handler:           metricsHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
@@ -554,7 +564,7 @@ func runCatCmd(args []string) {
 
 // runExport implements the --export* flags: prepare the DB, scan every image
 // once, write the requested artifacts, and exit.
-func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, dbCaCert string, dbDirect, ignoreDB bool, fromSBOM string, vexDocs []scanner.VexDoc, namespaces []string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, gcpAuth, azureAuth, keepSBOM, insecure bool, customerName, clusterName, openCmd string) error {
+func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bool, dbCaCert string, dbDirect, ignoreDB bool, fromSBOM string, vexDocs []scanner.VexDoc, namespaces []string, labelSelector string, platform string, scanTimeout time.Duration, concurrency int, ecrAuth, gcpAuth, azureAuth, keepSBOM, insecure bool, customerName, clusterName, openCmd string) error {
 	if req.tarPath != "" && req.allDir == "" {
 		return fmt.Errorf("--export-tar requires --export <dir>")
 	}
@@ -614,19 +624,20 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		keepSBOM = true
 	}
 	sc := scanner.New(scanner.Options{
-		Namespaces:  namespaces,
-		FromSBOM:    fromSBOM,
-		Provider:    provider,
-		ECR:         ecrProvider,
-		GCP:         gcpProvider,
-		Azure:       azureProvider,
-		KeepSBOM:    keepSBOM,
-		Insecure:    insecure,
-		Platform:    platform,
-		Timeout:     scanTimeout,
-		Concurrency: concurrency,
-		Store:       store,
-		VexDocs:     vexDocs,
+		Namespaces:    namespaces,
+		LabelSelector: labelSelector,
+		FromSBOM:      fromSBOM,
+		Provider:      provider,
+		ECR:           ecrProvider,
+		GCP:           gcpProvider,
+		Azure:         azureProvider,
+		KeepSBOM:      keepSBOM,
+		Insecure:      insecure,
+		Platform:      platform,
+		Timeout:       scanTimeout,
+		Concurrency:   concurrency,
+		Store:         store,
+		VexDocs:       vexDocs,
 	})
 
 	if fromSBOM != "" {

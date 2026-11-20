@@ -127,11 +127,12 @@ func newForConfig(cfg *rest.Config) (*Client, error) {
 }
 
 // Discover lists pods (restricted to the given namespaces, or all namespaces
-// when empty) and collects every unique container image together with the
-// docker config payloads of the imagePullSecrets that apply to it and the
-// workloads (namespace + controller) running it.
-func (c *Client) Discover(ctx context.Context, namespaces []string) (*Discovery, error) {
-	pods, err := c.cs.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+// when empty, and to the pods matching the Kubernetes label selector, or all
+// pods when empty) and collects every unique container image together with
+// the docker config payloads of the imagePullSecrets that apply to it and
+// the workloads (namespace + controller) running it.
+func (c *Client) Discover(ctx context.Context, namespaces []string, labelSelector string) (*Discovery, error) {
+	pods, err := c.cs.CoreV1().Pods("").List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
 		return nil, fmt.Errorf("list pods: %w", err)
 	}

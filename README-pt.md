@@ -133,7 +133,9 @@ O artifactor aceita **documentos VEX** (**OpenVEX** ou **CSAF**) que marcam CVEs
 |---|---|---|---|
 | `--port` | `PORT` | `8080` | porta HTTP |
 | `--metrics-listen <[ip][:porta]>` | `METRICS_LISTEN` | `0.0.0.0:9090` | endereço (IP e/ou porta, ambos opcionais) do endpoint Prometheus `GET /metrics` |
+| `--access-log` | `ACCESS_LOG` | `false` | registra uma linha por request HTTP nos servidores SPA/API e de métricas (`GET /healthz` é pulado); o deployment instalado roda com `ACCESS_LOG=true` |
 | `--namespace` | `NAMESPACE` | (todos) | restringe o scan a uma **lista de namespaces separados por vírgula** (`--namespace a,b`); vazio = todos |
+| `--label-selector <sel>` | `LABEL_SELECTOR` | (todos) | restringe o discovery aos pods que casam com este **label selector do Kubernetes** (ex.: `app=web,tier in (frontend,api)`); vazio = todos os pods |
 | `--scan-interval` | `SCAN_INTERVAL` | `6h` | intervalo de rescan automático (`0` desliga) |
 | `--concurrency` | `CONCURRENCY` | `3` | scans paralelos |
 | `--db-dir` | `DB_DIR` | cache do usuário | diretório do banco de vulnerabilidades do grype |

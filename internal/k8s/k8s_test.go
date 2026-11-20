@@ -76,7 +76,7 @@ func TestDiscoverNamespaceFilter(t *testing.T) {
 	c := &Client{cs: cs}
 	ctx := context.Background()
 
-	disc, err := c.Discover(ctx, []string{"ns-a", "ns-b"})
+	disc, err := c.Discover(ctx, []string{"ns-a", "ns-b"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestDiscoverNamespaceFilter(t *testing.T) {
 		t.Fatalf("filtered images = %v, want [img-a:1 img-b:1]", disc.Images)
 	}
 
-	disc, err = c.Discover(ctx, nil)
+	disc, err = c.Discover(ctx, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,12 +92,46 @@ func TestDiscoverNamespaceFilter(t *testing.T) {
 		t.Fatalf("unfiltered images = %v, want 3", disc.Images)
 	}
 
-	disc, err = c.Discover(ctx, []string{"ns-c"})
+	disc, err = c.Discover(ctx, []string{"ns-c"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(disc.Images) != 1 || disc.Images[0] != "img-c:1" {
 		t.Fatalf("ns-c images = %v", disc.Images)
+	}
+}
+
+func TestDiscoverLabelSelector(t *testing.T) {
+	pod := func(name, ns, image, app string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{"app": app}},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Image: image}}},
+		}
+	}
+	cs := fake.NewSimpleClientset(
+		pod("a", "ns-a", "img-a:1", "web"),
+		pod("b", "ns-a", "img-b:1", "db"),
+		pod("c", "ns-b", "img-c:1", "web"),
+	)
+	c := &Client{cs: cs}
+	ctx := context.Background()
+
+	// the selector restricts the discovered pods (the empty selector keeps
+	// the current behavior: all pods are selected)
+	disc, err := c.Discover(ctx, nil, "app=web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disc.Images) != 2 || disc.Images[0] != "img-a:1" || disc.Images[1] != "img-c:1" {
+		t.Fatalf("selector images = %v, want [img-a:1 img-c:1]", disc.Images)
+	}
+
+	disc, err = c.Discover(ctx, []string{"ns-a"}, "app=web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disc.Images) != 1 || disc.Images[0] != "img-a:1" {
+		t.Fatalf("selector+namespace images = %v, want [img-a:1]", disc.Images)
 	}
 }
 

@@ -133,7 +133,9 @@ Artifactor accepts **VEX documents** (**OpenVEX** or **CSAF**) that mark CVEs as
 |---|---|---|---|
 | `--port` | `PORT` | `8080` | HTTP port |
 | `--metrics-listen <[ip][:port]>` | `METRICS_LISTEN` | `0.0.0.0:9090` | listen address (IP and/or port, both optional) of the Prometheus `GET /metrics` endpoint |
+| `--access-log` | `ACCESS_LOG` | `false` | logs one line per HTTP request on the SPA/API and metrics servers (`GET /healthz` is skipped); the installed deployment runs with `ACCESS_LOG=true` |
 | `--namespace` | `NAMESPACE` | (all) | restricts the scan to a **comma-separated namespace list** (`--namespace a,b`); empty = all |
+| `--label-selector <sel>` | `LABEL_SELECTOR` | (all) | restricts the discovery to the pods matching this **Kubernetes label selector** (e.g. `app=web,tier in (frontend,api)`); empty = all pods |
 | `--scan-interval` | `SCAN_INTERVAL` | `6h` | automatic rescan interval (`0` disables) |
 | `--concurrency` | `CONCURRENCY` | `3` | parallel scans |
 | `--db-dir` | `DB_DIR` | user cache | grype vulnerability database directory |

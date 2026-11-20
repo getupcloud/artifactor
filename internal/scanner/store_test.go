@@ -5,6 +5,21 @@ import (
 	"time"
 )
 
+func TestStoreDiscovering(t *testing.T) {
+	s := NewStore()
+	if s.IsDiscovering() {
+		t.Fatal("new store reports discovering")
+	}
+	s.SetDiscovering(true)
+	if !s.IsDiscovering() {
+		t.Fatal("SetDiscovering(true) not visible")
+	}
+	s.SetDiscovering(false)
+	if s.IsDiscovering() {
+		t.Fatal("SetDiscovering(false) not visible")
+	}
+}
+
 func TestStoreTryStartScan(t *testing.T) {
 	s := NewStore()
 	canceled := false

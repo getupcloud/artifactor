@@ -50,13 +50,12 @@ button.secondary { background: var(--panel2); border: 1px solid var(--border); c
 }
 .banner.show { display: block; }
 .banner.info { background: rgba(79,156,249,.12); border-color: rgba(79,156,249,.4); color: #a8cfff; }
-.img-error {
-  display: none; margin: 10px 18px 0; padding: 10px 14px; border-radius: 8px;
-  font-size: 13px; background: rgba(229,72,77,.12);
-  border: 1px solid rgba(229,72,77,.4); color: #ffb3b5;
-  white-space: pre-wrap; word-break: break-word;
+.img-error-body {
+  margin: 0; max-height: 62vh; overflow: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: pre-wrap; word-break: break-word; color: #ffb3b5;
 }
-.img-error.show { display: block; }
 .statusline {
   display: none; align-items: center; justify-content: center; gap: 8px;
   padding: 8px 18px; font-size: 13px;
@@ -211,6 +210,7 @@ th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid rgba(42,5
 th { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); position: sticky; top: 0; background: var(--panel); }
 tr:hover td { background: var(--panel2); }
 tr.cve-row { cursor: pointer; }
+tr.cve-row td:nth-child(2) { white-space: nowrap; } /* CVE column: no line wrapping */
 td.chev { width: 24px; color: var(--muted); text-align: center; user-select: none; }
 tr.expand-row td { background: var(--bg); padding: 14px 18px; }
 tr.expand-row:hover td { background: var(--bg); }
@@ -342,6 +342,16 @@ tr.expand-row:hover td { background: var(--bg); }
   </div>
 </div>
 
+<div class="modal-overlay" id="img-error-modal">
+  <div class="modal wide">
+    <h3 id="img-error-title">Scan error</h3>
+    <pre class="img-error-body" id="img-error-body"></pre>
+    <div class="actions">
+      <button class="secondary" id="img-error-close">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="banner" id="banner"></div>
 
 <div class="stats" id="stats">
@@ -411,7 +421,6 @@ tr.expand-row:hover td { background: var(--bg); }
       <button class="secondary" id="clear-btn">Clear filters</button>
       <span class="hint" id="cve-count"></span>
     </div>
-    <div class="img-error" id="img-error"></div>
     <div class="tablewrap">
       <table>
         <thead>
@@ -713,7 +722,13 @@ function renderImageList() {
       : img.status === "error" ? '<span class="err">error</span>' : '<span class="count">…</span>';
     row.innerHTML = dot + '<span class="name">' + esc(img.image) + "</span>" +
       '<button class="img-copy" title="Copy the full image URL">⧉</button>' + badge;
-    row.onclick = () => { state.selected = img.image; renderImageList(); loadCVEs(); loadArtifacts(); };
+    row.onclick = () => {
+      state.selected = img.image;
+      renderImageList();
+      loadCVEs();
+      loadArtifacts();
+      if (img.error) showImgError(img);
+    };
     const copyBtn = row.querySelector(".img-copy");
     copyBtn.onclick = async (e) => {
       e.stopPropagation();
@@ -723,17 +738,16 @@ function renderImageList() {
     };
     list.appendChild(row);
   }
-
-  // the scan error of the selected image, shown in the main panel
-  const sel = state.images.find((i) => i.image === state.selected);
-  const errBox = $("img-error");
-  if (sel && sel.error) {
-    errBox.textContent = "Scan error: " + sel.error;
-    errBox.classList.add("show");
-  } else {
-    errBox.classList.remove("show");
-  }
 }
+
+// showImgError opens the scan error of an image in a dialog.
+function showImgError(img) {
+  $("img-error-title").textContent = img.image;
+  $("img-error-body").textContent = img.error;
+  $("img-error-modal").classList.add("show");
+}
+
+$("img-error-close").onclick = () => $("img-error-modal").classList.remove("show");
 
 /* ---------- CVE table ---------- */
 

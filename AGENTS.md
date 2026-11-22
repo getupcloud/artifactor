@@ -43,6 +43,10 @@
   kubeconfigs nunca sai do processo).
 - `internal/api/` — servidor HTTP, endpoints JSON, exports HTML/CSV/SBOM;
   endpoints `/api/clusters` (list/add/remove/select/context),
+  `/api/cves-page` (tabela de CVEs paginada: mesmos filtros de
+  `/api/cves` + `page`/`pageSize`/`sort`/`dir`, clamp na última página,
+  `{rows,total,page,pageSize}`; sort em cve/severity/package/version/
+  image/matcher com tie-break na ordem default),
   `/api/scan/cancel` (cancela o scan em andamento; imagens "scanning"
   voltam a "queued") e `/api/vex` (a list inclui os docs `--vex` do
   startup + uploads; add/remove/download de uploads e download dos docs do
@@ -316,10 +320,11 @@
   DB, política fail-fast do DB, formato de log com arquivo:linha, check de
   atualização de versão no início do scan, gerenciamento de clusters no SPA,
   cancelamento do scan pela UI, auto-open do SPA no navegador, métricas
-  Prometheus em `--metrics-listen` 0.0.0.0:9090, status line permanente no
-  SPA (fases do scan "Discovering/Scanning images" — `discovering` no
+  Prometheus em `--metrics-listen` 0.0.0.0:9090, status no chip do header
+  (fases do scan "Discovering/Scanning images" — `discovering` no
   status —, "Updating vulnerability DB" (`db.updating` no status),
-  "Backend connection error" e Idle), access log
+  "Backend connection error" e Idle), paginação + sort na tabela de CVEs
+  (server e snapshot), access log
   dos servidores HTTP (SPA, API e métricas), suporte a VEX (`--vex`,
   indicador e filtro no SPA), gestão de VEX na UI (upload + reprocessamento
   sem rescan + diálogo com copy/download), GKE Workload Identity

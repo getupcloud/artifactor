@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -234,6 +235,116 @@ func TestCVEExcludeVexFilter(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/cves.csv?exclude-vex=1", nil))
 	if strings.Contains(rec.Body.String(), "CVE-2026-0001") {
 		t.Errorf("csv with exclude-vex=1 still contains the vex-ignored CVE:\n%s", rec.Body.String())
+	}
+}
+
+func TestCVEsPageEndpoint(t *testing.T) {
+	srv, _ := testServer(t)
+	h := srv.Handler()
+
+	pageResp := func(path string) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s -> %d: %s", path, rec.Code, rec.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("GET %s: bad JSON: %v", path, err)
+		}
+		return out
+	}
+
+	// default page/pageSize: everything on one page
+	out := pageResp("/api/cves-page")
+	if out["total"] != float64(4) || out["page"] != float64(1) || out["pageSize"] != float64(100) {
+		t.Fatalf("default page = %v", out)
+	}
+
+	// paging: 2 pages of 2, deterministic order (severity, package, id)
+	out = pageResp("/api/cves-page?page=1&pageSize=2")
+	rows := out["rows"].([]any)
+	if len(rows) != 2 || out["total"] != float64(4) || out["page"] != float64(1) {
+		t.Fatalf("page 1 = %v", out)
+	}
+	first := rows[0].(map[string]any)
+	if first["id"] != "CVE-2024-0001" || first["severity"] != "critical" {
+		t.Errorf("first row = %v/%v, want CVE-2024-0001/critical", first["id"], first["severity"])
+	}
+	out = pageResp("/api/cves-page?page=2&pageSize=2")
+	rows = out["rows"].([]any)
+	if len(rows) != 2 || out["page"] != float64(2) {
+		t.Fatalf("page 2 = %v", out)
+	}
+	last := rows[0].(map[string]any)
+	if last["id"] != "CVE-2024-0002" || last["package"] != "busybox" {
+		t.Errorf("last page first row = %v/%v, want CVE-2024-0002/busybox", last["id"], last["package"])
+	}
+
+	// page beyond the end clamps to the last page
+	out = pageResp("/api/cves-page?page=999&pageSize=3")
+	if out["page"] != float64(2) || len(out["rows"].([]any)) != 1 {
+		t.Fatalf("clamped page = %v", out)
+	}
+
+	// filters combine with pagination
+	out = pageResp("/api/cves-page?severity=critical&pageSize=1")
+	if out["total"] != float64(1) {
+		t.Fatalf("severity filter total = %v, want 1", out["total"])
+	}
+
+	// pageSize is capped at 500
+	out = pageResp("/api/cves-page?pageSize=5000")
+	if out["pageSize"] != float64(500) {
+		t.Fatalf("capped pageSize = %v, want 500", out["pageSize"])
+	}
+
+	// invalid page/pageSize -> 400
+	for _, path := range []string{"/api/cves-page?page=0", "/api/cves-page?page=abc", "/api/cves-page?pageSize=0", "/api/cves-page?pageSize=x"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("GET %s -> %d, want 400", path, rec.Code)
+		}
+	}
+
+	// the order is stable across calls
+	a := pageResp("/api/cves-page?pageSize=10")
+	b := pageResp("/api/cves-page?pageSize=10")
+	if !reflect.DeepEqual(a["rows"], b["rows"]) {
+		t.Error("row order is not stable across calls")
+	}
+
+	// explicit sort: asc/desc on the CVE id column
+	out = pageResp("/api/cves-page?sort=cve&dir=asc&pageSize=10")
+	rows = out["rows"].([]any)
+	if rows[0].(map[string]any)["id"] != "CVE-2023-9999" {
+		t.Errorf("sort=cve asc first row = %v, want CVE-2023-9999", rows[0])
+	}
+	out = pageResp("/api/cves-page?sort=cve&dir=desc&pageSize=10")
+	rows = out["rows"].([]any)
+	if rows[0].(map[string]any)["id"] != "CVE-2024-0002" {
+		t.Errorf("sort=cve desc first row = %v, want CVE-2024-0002", rows[0])
+	}
+
+	// severity desc: least severe first (medium in the fixture)
+	out = pageResp("/api/cves-page?sort=severity&dir=desc&pageSize=10")
+	rows = out["rows"].([]any)
+	if rows[0].(map[string]any)["severity"] != "medium" {
+		t.Errorf("sort=severity desc first row = %v, want medium", rows[0])
+	}
+
+	// invalid sort/dir -> 400
+	for _, path := range []string{"/api/cves-page?sort=banana", "/api/cves-page?sort=cve&dir=up"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("GET %s -> %d, want 400", path, rec.Code)
+		}
 	}
 }
 
@@ -1061,6 +1172,7 @@ func TestStatusEndpoint(t *testing.T) {
 	srv, store := testServer(t)
 	srv.opts.CustomerName = "Acme"
 	srv.opts.ClusterName = "prod-eks"
+	srv.opts.Version = "1.2.3"
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -1073,6 +1185,9 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 	if status["customer"] != "Acme" || status["cluster"] != "prod-eks" {
 		t.Errorf("customer/cluster = %v/%v", status["customer"], status["cluster"])
+	}
+	if status["version"] != "1.2.3" {
+		t.Errorf("version = %v, want 1.2.3", status["version"])
 	}
 	store.SetStats(scanner.ScanStats{Images: 3, DurationSec: 60, AvgSecPerImg: 20, Bytes: 1500, BytesPerSec: 25})
 	rec = httptest.NewRecorder()

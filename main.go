@@ -342,6 +342,7 @@ func runScanCmd(args []string) {
 		Insecure:     *insecure,
 		CustomerName: *customerName,
 		ClusterName:  *clusterName,
+		Version:      version,
 		DB: func() scanner.DBStatus {
 			dbMu.RLock()
 			defer dbMu.RUnlock()
@@ -657,6 +658,7 @@ func runExport(ctx context.Context, req exportRequest, dbDir string, dbUpdate bo
 		Insecure:     insecure,
 		CustomerName: customerName,
 		ClusterName:  clusterName,
+		Version:      version,
 		DB:           func() scanner.DBStatus { return dbStatus },
 	})
 

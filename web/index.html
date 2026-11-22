@@ -56,15 +56,12 @@ button.secondary { background: var(--panel2); border: 1px solid var(--border); c
   padding: 12px; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   white-space: pre-wrap; word-break: break-word; color: #ffb3b5;
 }
-.statusline {
-  display: none; align-items: center; justify-content: center; gap: 8px;
-  padding: 8px 18px; font-size: 13px;
-  background: var(--panel); border-bottom: 1px solid rgba(79,156,249,.4);
-  color: #a8cfff;
+.status-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: #a8cfff; white-space: nowrap;
 }
-.statusline.show { display: flex; }
-.statusline.error { background: rgba(229,72,77,.12); border-color: rgba(229,72,77,.4); color: #ffb3b5; }
-.statusline.idle { color: var(--muted); border-color: var(--border); }
+.status-chip.error { color: #ffb3b5; }
+.status-chip.idle { color: var(--muted); }
 .clusterbar {
   display: none; align-items: flex-start; gap: 12px; flex-wrap: wrap;
   padding: 8px 18px; background: var(--panel); border-bottom: 1px solid var(--border);
@@ -180,6 +177,16 @@ button.danger { background: var(--err); }
 .img-copy:hover { color: var(--text); }
 .imgrow:hover .img-copy { display: inline-block; }
 .content { flex: 1; min-width: 0; }
+.pager {
+  display: none; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.pager.show { display: flex; }
+.pager-info { color: var(--muted); font-size: 12.5px; }
+.pager-size { margin-left: auto; font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.pager-size select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 8px; font-size: 12.5px;
+}
 .filters {
   display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
@@ -208,6 +215,9 @@ button.danger { background: var(--err); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid rgba(42,54,68,.5); vertical-align: top; }
 th { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); position: sticky; top: 0; background: var(--panel); }
+th[data-sort] { cursor: pointer; user-select: none; }
+th[data-sort]:hover { color: var(--text); }
+th[data-sort] .arrow { color: var(--accent); }
 tr:hover td { background: var(--panel2); }
 tr.cve-row { cursor: pointer; }
 tr.cve-row td:nth-child(2) { white-space: nowrap; } /* CVE column: no line wrapping */
@@ -261,16 +271,16 @@ tr.expand-row:hover td { background: var(--bg); }
 <body>
 <header>
   <h1>Artifactor</h1>
+  <span class="chip" id="version-chip">…</span>
   <span class="chip" id="mode-chip">…</span>
   <span class="chip" id="db-chip">db: …</span>
   <span class="chip" id="last-chip">last scan: never</span>
+  <span class="status-chip" id="status-line"></span>
   <span class="spacer"></span>
   <button class="secondary" id="export-btn" title="Download this report as a single self-contained HTML file">HTML</button>
   <button class="secondary" id="csv-btn" title="Download the CVE report (current filters) as CSV">CSV</button>
   <button id="scan-btn" title="Scan every image in the cluster" disabled>Scan now</button>
 </header>
-
-<div class="statusline" id="status-line"></div>
 
 <div class="clusterbar" id="cluster-bar">
   <span class="cluster-sec">
@@ -421,12 +431,31 @@ tr.expand-row:hover td { background: var(--bg); }
       <button class="secondary" id="clear-btn">Clear filters</button>
       <span class="hint" id="cve-count"></span>
     </div>
+    <div class="pager" id="pager">
+      <button class="secondary" id="pager-prev">‹ Prev</button>
+      <span class="pager-info" id="pager-info"></span>
+      <button class="secondary" id="pager-next">Next ›</button>
+      <label class="pager-size">Page size
+        <select id="pager-size">
+          <option value="50">50</option>
+          <option value="100" selected>100</option>
+          <option value="250">250</option>
+          <option value="500">500</option>
+        </select>
+      </label>
+    </div>
     <div class="tablewrap">
       <table>
         <thead>
           <tr>
-            <th></th><th>CVE</th><th>Severity</th><th>Package</th><th>Version</th>
-            <th>Fixed in</th><th id="th-image">Image</th><th>Matcher</th>
+            <th></th>
+            <th data-sort="cve" title="Sort by CVE ID">CVE</th>
+            <th data-sort="severity" title="Sort by severity">Severity</th>
+            <th data-sort="package" title="Sort by package name">Package</th>
+            <th data-sort="version" title="Sort by package version">Version</th>
+            <th>Fixed in</th>
+            <th id="th-image" data-sort="image" title="Sort by image">Image</th>
+            <th data-sort="matcher" title="Sort by matcher">Matcher</th>
           </tr>
         </thead>
         <tbody id="cve-tbody"></tbody>
@@ -467,6 +496,26 @@ const SNAPSHOT = (() => {
   return merged;
 })();
 
+const SEV_RANK = Object.fromEntries(SEVS.map((s, i) => [s, i]));
+
+// compareCVEs mirrors the server sort comparator for one column.
+function compareCVEs(a, b, key) {
+  switch (key) {
+    case "cve": return (a.id || "").localeCompare(b.id || "");
+    case "severity": return (SEV_RANK[a.severity] ?? 99) - (SEV_RANK[b.severity] ?? 99);
+    case "package": return (a.package || "").localeCompare(b.package || "");
+    case "version": return (a.packageVersion || "").localeCompare(b.packageVersion || "");
+    case "image": return (a.image || "").localeCompare(b.image || "");
+    case "matcher": return (a.matcher || "").localeCompare(b.matcher || "");
+  }
+  return 0;
+}
+
+// defaultCVECompare is the default row order (severity, package, CVE id).
+function defaultCVECompare(a, b) {
+  return compareCVEs(a, b, "severity") || compareCVEs(a, b, "package") || compareCVEs(a, b, "cve");
+}
+
 function snapshotFilterCVEs(params) {
   const image = params.get("image") || "";
   const namespace = params.get("namespace") || "";
@@ -488,11 +537,7 @@ function snapshotFilterCVEs(params) {
     (!fixedOnly || (c.fixedIn && c.fixedIn.length > 0)) &&
     (!excludeVex || !c.vexStatus)
   );
-  const rank = Object.fromEntries(SEVS.map((s, i) => [s, i]));
-  rows.sort((a, b) =>
-    rank[a.severity] - rank[b.severity] ||
-    (a.package || "").localeCompare(b.package || "") ||
-    (a.id || "").localeCompare(b.id || ""));
+  rows.sort(defaultCVECompare);
   return rows;
 }
 
@@ -505,6 +550,26 @@ function snapshotAPI(path) {
       return Promise.resolve(SNAPSHOT.images || []);
     case "/api/cves":
       return Promise.resolve(snapshotFilterCVEs(url.searchParams));
+    case "/api/cves-page": {
+      // offline pagination: filter + sort everything client-side, then slice
+      // the requested page (same shape as the live endpoint)
+      const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
+      const pageSize = Math.min(500, Math.max(1, parseInt(url.searchParams.get("pageSize") || "100", 10) || 100));
+      const rows = snapshotFilterCVEs(url.searchParams);
+      const sortKey = url.searchParams.get("sort") || "";
+      const desc = url.searchParams.get("dir") === "desc";
+      if (sortKey) {
+        rows.sort((a, b) => {
+          const c = compareCVEs(a, b, sortKey);
+          return c ? (desc ? -c : c) : defaultCVECompare(a, b);
+        });
+      }
+      const total = rows.length;
+      const lastPage = Math.max(1, Math.ceil(total / pageSize));
+      const p = Math.min(page, lastPage);
+      const start = (p - 1) * pageSize;
+      return Promise.resolve({ rows: rows.slice(start, start + pageSize), total, page: p, pageSize });
+    }
     case "/api/namespaces":
       return Promise.resolve(SNAPSHOT.namespaces || []);
     case "/api/named-vulns":
@@ -532,7 +597,12 @@ const state = {
   status: null,
   backendError: null,  // last /api/status failure (shown on the status line)
   imageSearch: "",
-  lastQuery: null,     // /api/cves query string of the last render
+  lastQuery: null,     // filters query string of the last render (page/pageSize excluded)
+  cvePage: 1,          // current page of the CVE table (1-based)
+  cvePageSize: 100,    // rows per page
+  cveTotal: 0,         // total CVE rows matching the current filters
+  cveSort: "",         // sort column ("" = default severity/package/id order)
+  cveSortDir: "asc",   // sort direction
   loaded: false,       // first CVE load finished (scan button enabled from here on)
   clusters: [],        // /api/clusters entries ([] hides the cluster bar)
   selectedCluster: "", // name of the cluster the scan targets
@@ -584,6 +654,8 @@ async function refreshStatus() {
     document.title = title;
     const h1 = document.querySelector("h1");
     if (h1) h1.textContent = title;
+    const ver = state.status.version || "";
+    $("version-chip").textContent = ver ? (ver === "dev" ? "dev" : "v" + ver) : "";
     $("mode-chip").textContent = state.status.mode || "unknown";
     const db = state.status.db || {};
     $("db-chip").textContent = "db: " + (db.schemaVersion ? "v" + db.schemaVersion : "n/a")
@@ -646,14 +718,15 @@ async function refreshStatus() {
   }
 }
 
-// renderStatusLine shows the permanent top status line: a backend connection
-// error takes precedence, then the scan phases (discovering/scanning images),
-// then the vulnerability DB update state; "Idle" otherwise. Snapshots never
-// show it.
+// renderStatusLine shows the status chip in the header: a backend
+// connection error takes precedence, then the scan phases
+// (discovering/scanning images), then the vulnerability DB update state;
+// "Idle" otherwise. Snapshots never show it.
 function renderStatusLine() {
   const line = $("status-line");
   if (SNAPSHOT) {
-    line.classList.remove("show", "error", "idle");
+    line.classList.remove("error", "idle");
+    line.innerHTML = "";
     return;
   }
   const st = state.status || {};
@@ -675,7 +748,6 @@ function renderStatusLine() {
     html = '<span class="dot queued"></span> Idle';
   }
   line.innerHTML = html;
-  line.classList.add("show");
   line.classList.toggle("error", err);
   line.classList.toggle("idle", !err && !discovering && !dbUpdating && !scanning);
 }
@@ -776,30 +848,43 @@ function buildCVEsParams() {
 }
 
 async function loadCVEs() {
-  const params = buildCVEsParams();
-  let rows;
-  const query = params.toString();
-  try { rows = await api("/api/cves?" + query); }
-  catch { return; }
-  state.lastCVERows = rows;
-
-  // A changed query means the user changed a filter: forget open expansions.
-  // Background refreshes reuse the same query and keep them open.
-  if (query !== state.lastQuery) {
+  // A changed filter set (or sort) means the user changed something:
+  // forget open expansions and jump back to page 1. Background refreshes
+  // reuse the same filters and keep them open.
+  const filterKey = buildCVEsParams().toString() + "&sort=" + state.cveSort + "&dir=" + state.cveSortDir;
+  if (filterKey !== state.lastQuery) {
+    state.cvePage = 1;
     expanded.clear();
-    state.lastQuery = query;
+    state.lastQuery = filterKey;
   }
+
+  const params = buildCVEsParams();
+  if (state.cveSort) {
+    params.set("sort", state.cveSort);
+    params.set("dir", state.cveSortDir);
+  }
+  params.set("page", state.cvePage);
+  params.set("pageSize", state.cvePageSize);
+  let data;
+  try { data = await api("/api/cves-page?" + params.toString()); }
+  catch { return; }
+  const rows = data.rows || [];
+  state.lastCVERows = rows;
+  state.cveTotal = data.total || 0;
+  state.cvePage = data.page || 1; // the server clamps pages past the end
 
   const tbody = $("cve-tbody");
   tbody.innerHTML = "";
   state.loaded = true;
   const scanning = !!(state.status && state.status.scanning);
-  $("empty-msg").style.display = rows.length ? "none" : "block";
-  $("empty-msg").textContent = rows.length === 0
+  $("empty-msg").style.display = state.cveTotal ? "none" : "block";
+  $("empty-msg").textContent = state.cveTotal === 0
     ? (scanning ? "Loading scan" : "No CVEs match the current filters.")
     : "";
-  $("cve-count").textContent = rows.length + " CVE(s)";
+  $("cve-count").textContent = state.cveTotal + " CVE(s)";
   $("th-image").style.display = state.selected ? "none" : "";
+  renderPager();
+  renderSortHeaders();
 
   const trByKey = new Map();
   for (const c of rows) {
@@ -834,6 +919,26 @@ async function loadCVEs() {
     if (tr && expanded.has(key)) {
       toggleExpansion(tr, c);
     }
+  }
+}
+
+// renderPager refreshes the pagination bar from the current totals.
+function renderPager() {
+  const lastPage = Math.max(1, Math.ceil(state.cveTotal / state.cvePageSize));
+  $("pager-info").textContent = "Page " + state.cvePage + " of " + lastPage;
+  $("pager-prev").disabled = state.cvePage <= 1;
+  $("pager-next").disabled = state.cvePage >= lastPage;
+  $("pager").classList.toggle("show", state.cveTotal > state.cvePageSize);
+}
+
+// renderSortHeaders marks the active sort column with an arrow.
+function renderSortHeaders() {
+  for (const th of document.querySelectorAll("th[data-sort]")) {
+    const label = th.dataset.label || th.textContent.trim();
+    th.dataset.label = label;
+    th.innerHTML = esc(label) + (th.dataset.sort === state.cveSort
+      ? ' <span class="arrow">' + (state.cveSortDir === "asc" ? "▲" : "▼") + "</span>"
+      : "");
   }
 }
 
@@ -1047,12 +1152,12 @@ function csvField(v) {
   return '"' + String(v ?? "").replace(/"/g, '""') + '"';
 }
 
-// downloadCSVClient builds the CSV from the currently loaded rows (used in
-// offline snapshot mode).
+// downloadCSVClient builds the CSV from all rows matching the current
+// filters (used in offline snapshot mode — not just the visible page).
 function downloadCSVClient() {
   const lines = [["Image", "Namespace", "Controller", "CVE", "Severity", "Package",
     "Version", "Type", "Fixed In", "Matcher", "Description", "Data Source"]];
-  for (const c of (state.lastCVERows || [])) {
+  for (const c of snapshotFilterCVEs(buildCVEsParams())) {
     const insts = (c.images || []).filter((ref) => ref.image === c.image);
     lines.push([
       c.image,
@@ -1257,6 +1362,27 @@ $("vex-filter").onchange = loadCVEs;
 $("fixed-filter").onchange = loadCVEs;
 $("namespace-filter").onchange = loadCVEs;
 $("named-vuln-filter").onchange = loadCVEs;
+
+$("pager-prev").onclick = () => { if (state.cvePage > 1) { state.cvePage--; loadCVEs(); } };
+$("pager-next").onclick = () => { state.cvePage++; loadCVEs(); };
+$("pager-size").onchange = () => {
+  state.cvePageSize = parseInt($("pager-size").value, 10) || 100;
+  state.cvePage = 1;
+  loadCVEs();
+};
+
+for (const th of document.querySelectorAll("th[data-sort]")) {
+  th.onclick = () => {
+    const key = th.dataset.sort;
+    if (state.cveSort === key) {
+      state.cveSortDir = state.cveSortDir === "asc" ? "desc" : "asc";
+    } else {
+      state.cveSort = key;
+      state.cveSortDir = "asc";
+    }
+    loadCVEs();
+  };
+}
 
 for (const el of document.querySelectorAll(".stat.sev")) {
   el.onclick = () => {

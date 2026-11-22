@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,7 @@ type Options struct {
 	// Optional context shown in the report title and status payload.
 	CustomerName string
 	ClusterName  string
+	Version      string // binary version, shown in the status payload
 	K8sErr       error
 	DB           func() scanner.DBStatus // dynamic DB status (DB initializes in the background)
 	// AccessLog logs one line per request (the SPA and API access log).
@@ -148,6 +150,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/images", s.handleImages)
 	mux.HandleFunc("GET /api/cves", s.handleCVEs)
+	mux.HandleFunc("GET /api/cves-page", s.handleCVEsPage)
 	mux.HandleFunc("GET /api/cves.csv", s.handleCVEsCSV)
 	mux.HandleFunc("GET /api/named-vulns", s.handleNamedVulns)
 	mux.HandleFunc("GET /api/namespaces", s.handleNamespaces)
@@ -268,6 +271,7 @@ func (s *Server) statusPayload() map[string]any {
 		"lastScan":        s.opts.Store.Stats(),
 		"customer":        s.opts.CustomerName,
 		"cluster":         s.opts.ClusterName,
+		"version":         s.opts.Version,
 		"selectedCluster": selectedCluster,
 		"clusterError":    clusterError,
 		"db":              db,
@@ -344,20 +348,68 @@ func (s *Server) cveRows() []cveOut {
 		}
 	}
 
-	rank := map[string]int{}
-	for i, sev := range scanner.SeverityOrder {
-		rank[sev] = i
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if rank[out[i].Severity] != rank[out[j].Severity] {
-			return rank[out[i].Severity] < rank[out[j].Severity]
-		}
-		if out[i].PackageName != out[j].PackageName {
-			return out[i].PackageName < out[j].PackageName
-		}
-		return out[i].ID < out[j].ID
-	})
+	sort.SliceStable(out, func(i, j int) bool { return cveDefaultLess(out[i], out[j]) })
 	return out
+}
+
+// severityRank maps a severity to its display order (critical first);
+// unknown severities rank last.
+func severityRank(sev string) int {
+	for i, s := range scanner.SeverityOrder {
+		if s == sev {
+			return i
+		}
+	}
+	return len(scanner.SeverityOrder)
+}
+
+// cveDefaultLess is the deterministic default row order (severity, package,
+// CVE id), used by cveRows and as the tie-breaker of explicit sorts.
+func cveDefaultLess(a, b cveOut) bool {
+	if ra, rb := severityRank(a.Severity), severityRank(b.Severity); ra != rb {
+		return ra < rb
+	}
+	if a.PackageName != b.PackageName {
+		return a.PackageName < b.PackageName
+	}
+	return a.ID < b.ID
+}
+
+// cveSortKeys are the sortable columns of the CVE table.
+var cveSortKeys = map[string]bool{"cve": true, "severity": true, "package": true, "version": true, "image": true, "matcher": true}
+
+// sortCVEsPage sorts the filtered rows by the given column ("asc" or
+// "desc"), breaking ties with the default deterministic order so pages
+// stay stable. An empty key keeps the cveRows order.
+func sortCVEsPage(rows []cveOut, key, dir string) {
+	if key == "" {
+		return
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		cmp := 0
+		switch key {
+		case "cve":
+			cmp = strings.Compare(a.ID, b.ID)
+		case "severity":
+			cmp = severityRank(a.Severity) - severityRank(b.Severity)
+		case "package":
+			cmp = strings.Compare(a.PackageName, b.PackageName)
+		case "version":
+			cmp = strings.Compare(a.PackageVersion, b.PackageVersion)
+		case "image":
+			cmp = strings.Compare(a.Image, b.Image)
+		case "matcher":
+			cmp = strings.Compare(a.Matcher, b.Matcher)
+		}
+		if cmp == 0 {
+			return cveDefaultLess(a, b)
+		}
+		if dir == "desc" {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
 }
 
 // GET /api/cves?image=&artifact=&severity=&exclude=&id=&fixed=1&namespace=&exclude-vex=1
@@ -370,6 +422,70 @@ func (s *Server) cveRows() []cveOut {
 // case-insensitive substring match against the syft artifact (package) name.
 func (s *Server) handleCVEs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.filteredCVEs(r.URL.Query()))
+}
+
+// GET /api/cves-page?image=&artifact=&severity=&exclude=&id=&fixed=1&namespace=&exclude-vex=1&page=1&pageSize=100&sort=&dir=
+// Same filters as /api/cves plus pagination and sorting: rows are sorted
+// by the given column (cve, severity, package, version, image or matcher;
+// dir asc|desc, empty = the default severity/package/id order), with ties
+// broken by the default order, so pages are stable across requests; a
+// page beyond the last one clamps to the last page. page/pageSize must be
+// positive integers (400 otherwise); pageSize is capped at 500. Responds
+// {rows, total, page, pageSize}.
+func (s *Server) handleCVEsPage(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page := 1
+	if v := q.Get("page"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid page (must be a positive integer)"})
+			return
+		}
+		page = n
+	}
+	pageSize := 100
+	if v := q.Get("pageSize"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid pageSize (must be a positive integer)"})
+			return
+		}
+		pageSize = min(n, 500)
+	}
+	sortKey := q.Get("sort")
+	if sortKey != "" && !cveSortKeys[sortKey] {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid sort column (cve, severity, package, version, image or matcher)"})
+		return
+	}
+	dir := q.Get("dir")
+	if dir == "" {
+		dir = "asc"
+	}
+	if dir != "asc" && dir != "desc" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid dir (must be asc or desc)"})
+		return
+	}
+	rows := s.filteredCVEs(q)
+	sortCVEsPage(rows, sortKey, dir)
+	total := len(rows)
+	lastPage := (total + pageSize - 1) / pageSize
+	if lastPage < 1 {
+		lastPage = 1
+	}
+	if page > lastPage {
+		page = lastPage
+	}
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rows":     rows[start:end],
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
 // filteredCVEs applies the /api/cves query filters to all CVE rows.

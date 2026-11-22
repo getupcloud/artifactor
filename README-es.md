@@ -99,6 +99,7 @@ Dockerfile / Makefile       build de la imagen y automatización
 | GET | `/api/status` | modo del cliente k8s, estado de la DB de grype, si hay un escaneo en curso |
 | GET | `/api/images` | resumen por imagen: estado, recuento de CVEs por severidad |
 | GET | `/api/cves?image=&artifact=&severity=&exclude=&id=&fixed=&namespace=` | CVEs filtrados (artifact = subcadena del nombre del paquete syft) |
+| GET | `/api/cves-page?…&page=1&pageSize=100&sort=&dir=` | CVEs paginados (mismos filtros que `/api/cves`): `{rows, total, page, pageSize}`; `sort` es uno de `cve`, `severity`, `package`, `version`, `image` o `matcher` y `dir` es `asc`/`desc` (vacío = orden por defecto severity/package/id); `page` se ajusta a la última página y `pageSize` se limita a 500 |
 | GET | `/api/namespaces` | namespaces distintos de los workloads de las imágenes escaneadas |
 | GET | `/api/artifacts?image=&q=` | nombres distintos de artefactos (paquetes) encontrados por syft |
 | POST | `/api/scan` | lanza un reescaneo de todas las imágenes |

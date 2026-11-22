@@ -36,6 +36,7 @@ header .spacer { flex: 1; }
 .dot.scanning { background: var(--run); animation: pulse 1.2s infinite; }
 .dot.error { background: var(--err); }
 .dot.queued { background: var(--muted); }
+.dot.canceled { background: var(--medium); }
 @keyframes pulse { 50% { opacity: .3; } }
 button {
   background: var(--accent); color: #fff; border: 0; border-radius: 6px;
@@ -372,7 +373,7 @@ tr.expand-row:hover td { background: var(--bg); }
       <div class="stat status" data-status="scanned" title="Show/hide scanned images"><div class="n" id="stat-scanned">0</div><div class="l">Scanned</div></div>
       <div class="stat status" data-status="error" title="Show/hide images with errors"><div class="n" id="stat-errors">0</div><div class="l">Errors</div></div>
       <div class="stat status" data-status="scanning" title="Show/hide images being scanned"><div class="n" id="stat-scanning">0</div><div class="l">Scanning</div></div>
-      <div class="stat status" data-status="queued" title="Show/hide images waiting to be scanned"><div class="n" id="stat-waiting">0</div><div class="l">Waiting</div></div>
+      <div class="stat status" id="stat-queued" data-status="queued" title="Show/hide images waiting to be scanned"><div class="n" id="stat-waiting">0</div><div class="l" id="stat-waiting-label">Waiting</div></div>
     </div>
   </div>
   <div class="stat-divider"></div>
@@ -692,15 +693,18 @@ async function refreshStatus() {
     state.backendError = null;
     renderStatusLine();
     const scanning = !!state.status.scanning;
+    const cancelling = !!state.status.cancelling;
     const dbUpdating = !!db.updating;
     // the button stays enabled during a scan (it becomes the cancel
-    // button); while the vulnerability DB is updating, new scans can't
-    // start
-    $("scan-btn").disabled = !state.loaded || (dbUpdating && !scanning);
-    $("scan-btn").title = dbUpdating && !scanning
-      ? "The vulnerability DB is still updating"
-      : "Scan every image in the cluster";
-    $("scan-btn").textContent = scanning ? "Cancel scan" : "Scan now";
+    // button); while the vulnerability DB is updating or a cancel is
+    // finishing, it is blocked
+    $("scan-btn").disabled = !state.loaded || (dbUpdating && !scanning) || cancelling;
+    $("scan-btn").title = cancelling
+      ? "Cancelling the scan…"
+      : dbUpdating && !scanning
+        ? "The vulnerability DB is still updating"
+        : "Scan every image in the cluster";
+    $("scan-btn").textContent = cancelling ? "Cancelling…" : scanning ? "Cancel scan" : "Scan now";
     $("scan-btn").classList.toggle("danger", scanning);
     // cluster management is suspended while a scan runs (the scan uses the
     // client captured at start)
@@ -732,12 +736,15 @@ function renderStatusLine() {
   const st = state.status || {};
   const db = st.db || {};
   const err = !!state.backendError;
-  const discovering = !err && !!st.discovering;
-  const dbUpdating = !err && !discovering && !!db.updating;
-  const scanning = !err && !discovering && !dbUpdating && !!st.scanning;
+  const cancelling = !err && !!st.cancelling;
+  const discovering = !err && !cancelling && !!st.discovering;
+  const dbUpdating = !err && !cancelling && !discovering && !!db.updating;
+  const scanning = !err && !cancelling && !discovering && !dbUpdating && !!st.scanning;
   let html;
   if (err) {
     html = '<span class="dot error"></span> Backend connection error: ' + esc(state.backendError);
+  } else if (cancelling) {
+    html = '<span class="dot scanning"></span> Cancelling…';
   } else if (discovering) {
     html = '<span class="dot scanning"></span> Discovering images…';
   } else if (dbUpdating) {
@@ -749,18 +756,19 @@ function renderStatusLine() {
   }
   line.innerHTML = html;
   line.classList.toggle("error", err);
-  line.classList.toggle("idle", !err && !discovering && !dbUpdating && !scanning);
+  line.classList.toggle("idle", !err && !cancelling && !discovering && !dbUpdating && !scanning);
 }
 
 async function refreshImages() {
   state.images = await api("/api/images");
-  let scanned = 0, errors = 0, scanning = 0, waiting = 0, cves = 0;
+  let scanned = 0, errors = 0, scanning = 0, waiting = 0, canceled = 0, cves = 0;
   const sev = Object.fromEntries(SEVS.map((s) => [s, 0]));
   for (const img of state.images) {
     if (img.status === "scanned") scanned++;
     if (img.status === "error") errors++;
     if (img.status === "scanning") scanning++;
     if (img.status === "queued") waiting++;
+    if (img.status === "canceled") canceled++;
     cves += img.cveCount || 0;
     for (const s of SEVS) sev[s] += (img.severities || {})[s] || 0;
   }
@@ -768,7 +776,21 @@ async function refreshImages() {
   $("stat-scanned").textContent = scanned;
   $("stat-errors").textContent = errors;
   $("stat-scanning").textContent = scanning;
-  $("stat-waiting").textContent = waiting;
+  // after a cancellation the unfinished images are canceled: the Waiting
+  // chip becomes the Canceled chip (counting canceled images) until the
+  // next scan starts
+  const queuedChip = $("stat-queued");
+  if (canceled > 0) {
+    $("stat-waiting").textContent = canceled;
+    $("stat-waiting-label").textContent = "Canceled";
+    queuedChip.dataset.status = "canceled";
+    queuedChip.title = "Show/hide canceled images";
+  } else {
+    $("stat-waiting").textContent = waiting;
+    $("stat-waiting-label").textContent = "Waiting";
+    queuedChip.dataset.status = "queued";
+    queuedChip.title = "Show/hide images waiting to be scanned";
+  }
   $("stat-cves").textContent = cves;
   for (const s of SEVS) $("stat-" + s).textContent = sev[s];
   renderImageList();
@@ -791,7 +813,9 @@ function renderImageList() {
     const dot = '<span class="dot ' + img.status + '"></span>';
     const badge = img.status === "scanned"
       ? '<span class="count">' + img.cveCount + " CVEs</span>"
-      : img.status === "error" ? '<span class="err">error</span>' : '<span class="count">…</span>';
+      : img.status === "error" ? '<span class="err">error</span>'
+      : img.status === "canceled" ? '<span class="count">canceled</span>'
+      : '<span class="count">…</span>';
     row.innerHTML = dot + '<span class="name">' + esc(img.image) + "</span>" +
       '<button class="img-copy" title="Copy the full image URL">⧉</button>' + badge;
     row.onclick = () => {
@@ -1059,8 +1083,9 @@ async function loadArtifacts() {
 /* ---------- actions ---------- */
 
 $("scan-btn").onclick = async () => {
-  // during a scan the button cancels it (images still being scanned go
-  // back to the queued state)
+  // during a scan the button cancels it: the "Cancelling" state is only
+  // entered after the backend confirms the cancel, and the button stays
+  // blocked until the backend reports the run finished
   if (state.status && state.status.scanning) {
     $("scan-btn").disabled = true;
     try {
@@ -1069,13 +1094,13 @@ $("scan-btn").onclick = async () => {
         let msg = "cancel failed (HTTP " + res.status + ")";
         try { msg = (await res.json()).error || msg; } catch { /* keep default */ }
         showBannerError(msg);
+        $("scan-btn").disabled = false; // nothing was cancelled
       } else {
         showBannerInfo("Scan canceled.");
-        refreshImages().catch(() => {});
       }
-    } catch { /* server restarting */ }
-    $("scan-btn").disabled = false;
-    refreshStatus();
+    } catch { $("scan-btn").disabled = false; /* server restarting */ }
+    refreshImages().catch(() => {});
+    refreshStatus(); // picks up cancelling=true from the backend
     return;
   }
   // disable immediately and show the loading state in the CVE list (if it

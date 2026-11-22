@@ -103,9 +103,12 @@
   memória (a API nunca devolve o conteúdo dos kubeconfigs).
 - **Cancelar scan**: durante o scan o botão vira "Cancel scan";
   `POST /api/scan/cancel` chama o `Store.CancelScan()` (cancel registrado
-  atomicamente no `TryStartScan(cancel)`), que cancela o contexto, devolve
-  imagens "scanning" para "queued" e descarta resultados parciais dos
-  workers; o cancelamento nunca vira erro de DB (`context.Canceled` é
+  atomicamente no `TryStartScan(cancel)`), que cancela o contexto, marca
+  as imagens "scanning"/"queued" como **"canceled"** (novo status) e liga
+  o flag `cancelling` (no payload de `/api/status`) até o `FinishScan` —
+  o SPA só mostra "Cancelling…" e bloqueia o botão após o backend
+  confirmar; o próximo `TryStartScan` devolve as imagens "canceled" para
+  "queued"; o cancelamento nunca vira erro de DB (`context.Canceled` é
   ignorado pelos chamadores).
 - Ao fim de cada scan, taxas de erro de acesso por registry
   (`ScanStats.Registries`: erro de acesso = falha na fase syft/pull, erro com

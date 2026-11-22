@@ -43,6 +43,7 @@ import (
 // Scan status values.
 const (
 	StatusQueued   = "queued"
+	StatusCanceled = "canceled"
 	StatusScanning = "scanning"
 	StatusScanned  = "scanned"
 	StatusError    = "error"
@@ -134,6 +135,7 @@ type Store struct {
 	images       []string
 	scanning     bool
 	discovering  bool               // true while a scan run is in its discovery phase
+	cancelling   bool               // true from the cancel request until the run finishes
 	scanCancel   context.CancelFunc // cancels the running scan (nil when idle)
 	lastScanDone *time.Time
 	dbError      string
@@ -247,7 +249,8 @@ func (s *Store) Snapshot(image string) []Result {
 }
 
 // TryStartScan marks a scan run as started, atomically registering the cancel
-// function that stops it; returns false if one is already running.
+// function that stops it; returns false if one is already running. Images
+// canceled by a previous run go back to the queued state.
 func (s *Store) TryStartScan(cancel context.CancelFunc) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -256,13 +259,19 @@ func (s *Store) TryStartScan(cancel context.CancelFunc) bool {
 	}
 	s.scanning = true
 	s.scanCancel = cancel
+	for _, r := range s.results {
+		if r.Status == StatusCanceled {
+			r.Status = StatusQueued
+		}
+	}
 	return true
 }
 
-// CancelScan cancels the running scan, if any, and returns the images that
-// were being scanned to the queued state (their partial results are dropped
-// by the workers once the context is canceled). Returns false when no scan
-// is running.
+// CancelScan cancels the running scan, if any: the images that were being
+// scanned or still waiting are marked canceled (their partial results are
+// dropped by the workers once the context is canceled) and the store stays
+// in the cancelling state until the run finishes. Returns false when no
+// scan is running.
 func (s *Store) CancelScan() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -273,11 +282,12 @@ func (s *Store) CancelScan() bool {
 		s.scanCancel()
 	}
 	for _, r := range s.results {
-		if r.Status == StatusScanning {
-			r.Status = StatusQueued
+		if r.Status == StatusScanning || r.Status == StatusQueued {
+			r.Status = StatusCanceled
 			r.StartedAt = nil
 		}
 	}
+	s.cancelling = true
 	return true
 }
 
@@ -285,9 +295,18 @@ func (s *Store) FinishScan() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.scanning = false
+	s.cancelling = false
 	s.scanCancel = nil
 	now := time.Now().UTC()
 	s.lastScanDone = &now
+}
+
+// IsCancelling reports whether a cancel was requested and the scan run has
+// not finished yet.
+func (s *Store) IsCancelling() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cancelling
 }
 
 func (s *Store) IsScanning() bool {

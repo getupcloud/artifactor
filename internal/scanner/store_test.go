@@ -67,16 +67,34 @@ func TestStoreCancelScan(t *testing.T) {
 				t.Errorf("done:1 status = %s, want scanned", res.Status)
 			}
 		case "running:1":
-			if res.Status != StatusQueued {
-				t.Errorf("running:1 status = %s, want queued", res.Status)
+			if res.Status != StatusCanceled {
+				t.Errorf("running:1 status = %s, want canceled", res.Status)
 			}
 			if res.StartedAt != nil {
 				t.Errorf("running:1 StartedAt = %v, want nil", res.StartedAt)
 			}
 		case "waiting:1":
-			if res.Status != StatusQueued {
-				t.Errorf("waiting:1 status = %s, want queued", res.Status)
+			if res.Status != StatusCanceled {
+				t.Errorf("waiting:1 status = %s, want canceled", res.Status)
 			}
+		}
+	}
+
+	// cancelling stays true until the run finishes; a new scan re-queues
+	// the canceled images
+	if !s.IsCancelling() {
+		t.Error("IsCancelling = false after CancelScan")
+	}
+	s.FinishScan()
+	if s.IsCancelling() {
+		t.Error("IsCancelling = true after FinishScan")
+	}
+	if !s.TryStartScan(func() {}) {
+		t.Fatal("TryStartScan rejected after cancel")
+	}
+	for _, res := range s.Snapshot("") {
+		if res.Status == StatusCanceled {
+			t.Errorf("%s still canceled after a new scan started", res.Image)
 		}
 	}
 }

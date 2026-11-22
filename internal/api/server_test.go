@@ -1149,7 +1149,18 @@ func TestScanCancelEndpoint(t *testing.T) {
 	if !canceled {
 		t.Error("cancel function not invoked")
 	}
+
+	// the cancel is confirmed by the backend: the status payload reports
+	// cancelling until the run finishes
+	rec, out = doJSON(t, h, http.MethodGet, "/api/status", nil)
+	if out["cancelling"] != true {
+		t.Errorf("cancelling = %v, want true", out["cancelling"])
+	}
 	store.FinishScan()
+	rec, out = doJSON(t, h, http.MethodGet, "/api/status", nil)
+	if out["cancelling"] != false {
+		t.Errorf("cancelling after finish = %v, want false", out["cancelling"])
+	}
 }
 
 func TestScanWithoutUsableCluster(t *testing.T) {

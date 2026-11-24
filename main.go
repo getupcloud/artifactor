@@ -331,6 +331,56 @@ func runScanCmd(args []string) {
 
 	var dbMu sync.RWMutex
 	dbStatus := scanner.DBStatus{Dir: *dbDir, Updating: true} // cleared when the background init finishes
+
+	// doDBRefresh runs one DB update check and swaps the provider in place.
+	// The caller must have set dbStatus.Updating under dbMu; on failure the
+	// current (still usable) DB is kept and Updating is cleared.
+	doDBRefresh := func(force bool) {
+		logx.Debugf("checking for vulnerability DB update ...")
+		updated, provider, status, err := scanner.RefreshDB(scanner.DBOptions{
+			Root:           *dbDir,
+			AppVersion:     version,
+			CACert:         *dbCaCert,
+			DirectDownload: *dbDirect,
+			Insecure:       *insecure,
+			Force:          force,
+		})
+		dbMu.Lock()
+		if err != nil {
+			// keep the current (still usable) DB; just log the failure
+			dbStatus.Updating = false
+			dbMu.Unlock()
+			logx.Warnf("vulnerability DB refresh failed: %v", err)
+			return
+		}
+		dbStatus = status
+		dbMu.Unlock()
+		if sc != nil && provider != nil {
+			sc.SetProvider(provider)
+		}
+		if updated {
+			logx.Infof("vulnerability DB updated (schema %s)", status.SchemaVersion)
+		} else if force {
+			logx.Infof("vulnerability DB already up to date (manual check)")
+		} else {
+			logx.Debugf("vulnerability DB already up to date")
+		}
+	}
+
+	// refreshNow is the API trigger for manual DB updates (bypasses the 2h
+	// throttle); it runs in the background so the request returns promptly.
+	refreshNow := func() error {
+		dbMu.Lock()
+		defer dbMu.Unlock()
+		if dbStatus.Updating {
+			return fmt.Errorf("vulnerability DB update already in progress")
+		}
+		dbStatus.Updating = true
+		logx.Infof("manual vulnerability DB update requested from the SPA")
+		go doDBRefresh(true)
+		return nil
+	}
+
 	server := api.New(api.Options{
 		Store:        store,
 		Scanner:      sc,
@@ -348,6 +398,7 @@ func runScanCmd(args []string) {
 			defer dbMu.RUnlock()
 			return dbStatus
 		},
+		RefreshDB: refreshNow,
 		AccessLog: *accessLog,
 		VexDocs:   vexDocs,
 		Vex:       vex.New(),
@@ -451,35 +502,15 @@ func runScanCmd(args []string) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				logx.Debugf("checking for vulnerability DB update ...")
 				dbMu.Lock()
-				dbStatus.Updating = true
-				dbMu.Unlock()
-				updated, provider, status, err := scanner.RefreshDB(scanner.DBOptions{
-					Root:           *dbDir,
-					AppVersion:     version,
-					CACert:         *dbCaCert,
-					DirectDownload: *dbDirect,
-					Insecure:       *insecure,
-				})
-				dbMu.Lock()
-				if err != nil {
-					// keep the current (still usable) DB; just log the failure
-					dbStatus.Updating = false
+				if dbStatus.Updating {
+					// a manual update is already in progress
 					dbMu.Unlock()
-					logx.Warnf("vulnerability DB refresh failed: %v", err)
 					continue
 				}
-				dbStatus = status
+				dbStatus.Updating = true
 				dbMu.Unlock()
-				if sc != nil && provider != nil {
-					sc.SetProvider(provider)
-				}
-				if updated {
-					logx.Infof("vulnerability DB updated (schema %s)", status.SchemaVersion)
-				} else {
-					logx.Debugf("vulnerability DB already up to date")
-				}
+				doDBRefresh(false)
 			}
 		}
 	}()

@@ -29,6 +29,7 @@ import (
 	"github.com/anchore/stereoscope/pkg/image"
 	"github.com/anchore/syft/syft"
 	"github.com/anchore/syft/syft/format"
+	syftPkg "github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/sbom"
 	"github.com/anchore/syft/syft/source"
 
@@ -60,6 +61,15 @@ type Artifact struct {
 	PURL    string `json:"purl,omitempty"`
 }
 
+// CVEArtifactLocation is one filesystem path of the artifact affected by
+// a CVE, with the kind of path — package database entry ("package"), the
+// artifact file itself ("filename"), a metadata file ("metadata") or any
+// other path ("path") — used as the display label in the UI.
+type CVEArtifactLocation struct {
+	Path string `json:"path"`
+	Kind string `json:"kind,omitempty"`
+}
+
 // CVE is a vulnerability found by grype on a package of an image.
 type CVE struct {
 	ID             string   `json:"id"`
@@ -72,6 +82,10 @@ type CVE struct {
 	URLs           []string `json:"urls,omitempty"`
 	DataSource     string   `json:"dataSource,omitempty"`
 	Matcher        string   `json:"matcher,omitempty"`
+	// PURL identifies the affected artifact (package) unambiguously;
+	// Locations are the readable paths of the artifact in the image.
+	PURL      string                `json:"purl,omitempty"`
+	Locations []CVEArtifactLocation `json:"locations,omitempty"`
 	// VexStatus/VexFile mark a CVE that a VEX document ignored
 	// (not_affected or fixed): the status and the document that ignored it.
 	VexStatus string `json:"vexStatus,omitempty"`
@@ -736,6 +750,8 @@ func cveFromMatch(m match.Match) CVE {
 		PackageType:    string(m.Package.Type),
 		FixedIn:        m.Vulnerability.Fix.Versions,
 		Matcher:        matcherTypes(m.Details.Matchers()),
+		PURL:           m.Package.PURL,
+		Locations:      packageLocations(m.Package),
 	}
 	if md := m.Vulnerability.Metadata; md != nil {
 		c.Severity = normalizeSeverity(md.Severity)
@@ -746,6 +762,43 @@ func cveFromMatch(m match.Match) CVE {
 		c.Severity = "unknown"
 	}
 	return c
+}
+
+// packageLocations returns the readable paths of a package in the image
+// (access path when present, real path otherwise), each with its display
+// kind, in stable order and without empty paths or duplicates.
+func packageLocations(p pkg.Package) []CVEArtifactLocation {
+	locations := []CVEArtifactLocation{}
+	seen := map[string]struct{}{}
+	for _, loc := range p.Locations.ToSlice() {
+		path := loc.Path()
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		locations = append(locations, CVEArtifactLocation{Path: path, Kind: locationKind(p.Type)})
+	}
+	return locations
+}
+
+// locationKind classifies the location of a package of the given type:
+// package database entries, the artifact file itself, metadata files or
+// any other path (see CVEArtifactLocation).
+func locationKind(t syftPkg.Type) string {
+	switch t {
+	case syftPkg.AlpmPkg, syftPkg.ApkPkg, syftPkg.DebPkg, syftPkg.RpmPkg, syftPkg.PortagePkg:
+		return "package"
+	case syftPkg.BinaryPkg, syftPkg.JavaPkg, syftPkg.JenkinsPluginPkg, syftPkg.LinuxKernelPkg,
+		syftPkg.LinuxKernelModulePkg, syftPkg.GraalVMNativeImagePkg, syftPkg.AppleAppBundlePkg, syftPkg.ModelPkg:
+		return "filename"
+	case syftPkg.PythonPkg, syftPkg.CondaPkg, syftPkg.Rpkg:
+		return "metadata"
+	default:
+		return "path"
+	}
 }
 
 // runFromSBOM scans the SBOM file(s) configured via Options.FromSBOM with

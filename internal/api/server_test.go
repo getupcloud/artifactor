@@ -40,7 +40,12 @@ func testServer(t *testing.T) (*Server, *scanner.Store) {
 			{Name: "nginx", Version: "1.25.3", Type: "deb"},
 		},
 		Cves: []scanner.CVE{
-			{ID: "CVE-2024-0001", Severity: "critical", PackageName: "libssl3", PackageVersion: "3.0.11", PackageType: "deb", FixedIn: []string{"3.0.13"}, Description: "openssl bug"},
+			{ID: "CVE-2024-0001", Severity: "critical", PackageName: "libssl3", PackageVersion: "3.0.11", PackageType: "deb", FixedIn: []string{"3.0.13"}, Description: "openssl bug",
+				PURL: "pkg:deb/debian/libssl3@3.0.11?arch=amd64",
+				Locations: []scanner.CVEArtifactLocation{
+					{Path: "/usr/lib/x86_64-linux-gnu/libssl.so.3", Kind: "package"},
+					{Path: "/usr/lib/x86_64-linux-gnu/libcrypto.so.3", Kind: "package"},
+				}},
 			{ID: "CVE-2024-0002", Severity: "medium", PackageName: "nginx", PackageVersion: "1.25.3", PackageType: "deb"},
 		},
 		SBOM: []byte(`{"artifacts":[{"name":"nginx"}]}`),
@@ -558,11 +563,17 @@ func TestCVEsCSV(t *testing.T) {
 	if !strings.Contains(lines[0], "CVE") || !strings.Contains(lines[0], "Fixed In") {
 		t.Errorf("header = %q", lines[0])
 	}
+	if !strings.Contains(lines[0], "PURL") || !strings.Contains(lines[0], "Location") {
+		t.Errorf("header = %q", lines[0])
+	}
 	found := false
 	for _, l := range lines[1:] {
 		if strings.Contains(l, "CVE-2024-0001") {
 			found = true
 			if !strings.Contains(l, "3.0.13") || !strings.Contains(l, "critical") {
+				t.Errorf("row = %q", l)
+			}
+			if !strings.Contains(l, "pkg:deb/debian/libssl3") || !strings.Contains(l, "libssl.so.3") {
 				t.Errorf("row = %q", l)
 			}
 		}
@@ -1160,6 +1171,38 @@ func TestScanCancelEndpoint(t *testing.T) {
 	rec, out = doJSON(t, h, http.MethodGet, "/api/status", nil)
 	if out["cancelling"] != false {
 		t.Errorf("cancelling after finish = %v, want false", out["cancelling"])
+	}
+}
+
+func TestDBUpdateEndpoint(t *testing.T) {
+	srv, _ := testServer(t)
+	h := srv.Handler()
+
+	// no callback -> 503
+	rec, _ := doJSON(t, h, http.MethodPost, "/api/db/update", nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("update without callback -> %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+
+	// callback ok -> 202
+	called := false
+	srv.opts.RefreshDB = func() error { called = true; return nil }
+	rec, out := doJSON(t, h, http.MethodPost, "/api/db/update", nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("update -> %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	if !called || out["status"] != "started" {
+		t.Errorf("update callback called=%v status=%v", called, out["status"])
+	}
+
+	// update already in progress -> 409 with the callback error
+	srv.opts.RefreshDB = func() error { return errors.New("vulnerability DB update already in progress") }
+	rec, out = doJSON(t, h, http.MethodPost, "/api/db/update", nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("update in progress -> %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if out["error"] != "vulnerability DB update already in progress" {
+		t.Errorf("update error = %v", out["error"])
 	}
 }
 

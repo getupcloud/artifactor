@@ -64,6 +64,10 @@ type Options struct {
 	Version      string // binary version, shown in the status payload
 	K8sErr       error
 	DB           func() scanner.DBStatus // dynamic DB status (DB initializes in the background)
+	// RefreshDB triggers a forced vulnerability DB update in the background
+	// (POST /api/db/update). It returns an error when an update is already
+	// in progress. Nil disables the endpoint (exports and tests).
+	RefreshDB func() error
 	// AccessLog logs one line per request (the SPA and API access log).
 	// Off by default so the package tests stay quiet; the real server
 	// enables it.
@@ -163,6 +167,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("POST /api/scan", s.handleScan)
 	mux.HandleFunc("POST /api/scan/cancel", s.handleCancelScan)
+	mux.HandleFunc("POST /api/db/update", s.handleDBUpdate)
 	mux.HandleFunc("GET /api/vex", s.handleVexList)
 	mux.HandleFunc("POST /api/vex", s.handleAddVex)
 	mux.HandleFunc("DELETE /api/vex/{name}", s.handleRemoveVex)
@@ -552,7 +557,8 @@ func (s *Server) filteredCVEs(q url.Values) []cveOut {
 // csvColumns are the columns of the CSV report.
 var csvColumns = []string{
 	"Image", "Namespace", "Controller", "CVE", "Severity", "Package",
-	"Version", "Type", "Fixed In", "Matcher", "Description", "Data Source",
+	"Version", "Type", "PURL", "Location", "Fixed In", "Matcher",
+	"Description", "Data Source",
 }
 
 // writeCVEsCSV writes the given CVE rows as CSV (RFC 4180) to w.
@@ -584,6 +590,8 @@ func writeCVEsCSV(w io.Writer, rows []cveOut) error {
 			row.PackageName,
 			row.PackageVersion,
 			row.PackageType,
+			row.PURL,
+			strings.Join(locationPaths(row.Locations), "; "),
 			strings.Join(row.FixedIn, "; "),
 			row.Matcher,
 			row.Description,
@@ -605,6 +613,16 @@ func (s *Server) handleCVEsCSV(w http.ResponseWriter, r *http.Request) {
 	if err := writeCVEsCSV(w, s.filteredCVEs(r.URL.Query())); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// locationPaths extracts the paths of the artifact locations (the kind is
+// used only as a display label in the SPA).
+func locationPaths(locations []scanner.CVEArtifactLocation) []string {
+	paths := make([]string, 0, len(locations))
+	for _, loc := range locations {
+		paths = append(paths, loc.Path)
+	}
+	return paths
 }
 
 // appendUnique appends v to list unless it is already present.
@@ -1052,6 +1070,22 @@ func (s *Server) handleCancelScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "canceled"})
+}
+
+// POST /api/db/update triggers a forced vulnerability DB update in the
+// background (bypassing the 2h update check throttle). Responds 202 when
+// started, 409 when an update is already in progress and 503 when DB
+// management is not available (exports/tests without a callback).
+func (s *Server) handleDBUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.opts.RefreshDB == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "vulnerability DB management is not available"})
+		return
+	}
+	if err := s.opts.RefreshDB(); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
 }
 
 /* ---------- VEX documents (startup --vex + uploads via the UI) ---------- */

@@ -48,7 +48,9 @@
   `{rows,total,page,pageSize}`; sort em cve/severity/package/version/
   image/matcher com tie-break na ordem default),
   `/api/scan/cancel` (cancela o scan em andamento; imagens "scanning"
-  voltam a "queued") e `/api/vex` (a list inclui os docs `--vex` do
+  voltam a "queued"), `/api/db/update` (força um update do banco em
+  background, ignorando o TTL de 2h; 409 com update em andamento) e
+  `/api/vex` (a list inclui os docs `--vex` do
   startup + uploads; add/remove/download de uploads e download dos docs do
   startup — os do startup não são removíveis pela UI; add/remove
   reprocessa as CVEs sem rescan).
@@ -227,6 +229,12 @@
   hidrata; grava `import.json`; rename atômico para `<db-dir>/6`).
 - O primeiro download é grande (~3GB hidratado); o init roda em goroutine de
   fundo para o HTTP subir logo.
+- Updates automáticos (init e `--db-refresh-interval`) são throttled por uma
+  janela de **2h**: o arquivo `<db-dir>/6/last_update_check` (RFC3339,
+  escrito pelo curator do grype e pelo download direto) grava o último check
+  bem-sucedido e o check é pulado (sem rede) dentro da janela. O botão 🗘 no
+  chip do DB (`POST /api/db/update`) força o check (`DBOptions.Force`:
+  download direto pula o gate; curator usa `UpdateCheckMaxFrequency=0`).
 
 ## 7. Scan in-cluster (`scan --in-cluster`)
 
@@ -331,4 +339,11 @@
   dos servidores HTTP (SPA, API e métricas), suporte a VEX (`--vex`,
   indicador e filtro no SPA), gestão de VEX na UI (upload + reprocessamento
   sem rescan + diálogo com copy/download), GKE Workload Identity
-  (`--gcp-auth`) e Microsoft Entra Workload ID (`--azure-auth`).)
+  (`--gcp-auth`) e Microsoft Entra Workload ID (`--azure-auth`), PURL e
+  localização do artefato afetado nas CVEs (colunas `PURL`/`Location` no
+  CSV; bloco do artefato na expansão da linha com labels por kind —
+  `package:`/`filename:`/`metadata:`/`path:` —, `purl:` e título
+  "DESCRIPTION"; `artifact.purl`/`artifact.locations` no grype JSON
+  exportado), toggle para esconder a sidebar de imagens e expandir a área
+  de CVEs, TTL de 2h nos updates automáticos do banco (`last_update_check`)
+  e botão 🗘 no chip do DB para atualizar na hora.)

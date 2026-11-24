@@ -29,14 +29,37 @@ import (
 	"github.com/getupcloud/artifactor/internal/logx"
 )
 
+// dbLastUpdateCheckFileName and dbUpdateCheckMaxFrequency mirror the grype
+// curator: automatic update checks are throttled to one per window, recorded
+// as an RFC3339 timestamp in <dbRoot>/<schema>/last_update_check.
+const (
+	dbLastUpdateCheckFileName = "last_update_check"
+	dbUpdateCheckMaxFrequency = 2 * time.Hour
+)
+
 // directUpdate downloads the grype vulnerability DB and its metadata directly
 // with net/http (--grype-db-direct-download), instead of using the grype
 // download library. It mirrors the curator semantics: the listing
 // (latest.json) is fetched, the archive is downloaded only when it is newer
 // than the installed database (same schema model required), verified against
 // its sha256 checksum, extracted, hydrated and atomically swapped into
-// <dbRoot>/v6. It returns whether the installed database changed.
+// <dbRoot>/v6. Automatic checks are throttled by the last_update_check file
+// (2h window); opts.Force bypasses the throttle. It returns whether the
+// installed database changed.
 func directUpdate(opts DBOptions) (bool, error) {
+	// Installed database metadata, read before any network access so the
+	// update check throttle can skip the listing fetch entirely.
+	dbFile := filepath.Join(opts.Root, strconv.Itoa(dbv6.ModelVersion), dbv6.VulnerabilityDBFileName)
+	current, err := dbv6.ReadDescription(dbFile)
+	if err != nil && !errors.Is(err, dbv6.ErrDBDoesNotExist) {
+		logx.Warnf("cannot read installed vulnerability database metadata: %v (continuing with update)", err)
+		current = nil
+	}
+	if !opts.Force && current != nil && !directUpdateCheckAllowed(opts.Root) {
+		logx.Debugf("skipping vulnerability DB update check (last check less than %s ago)", dbUpdateCheckMaxFrequency)
+		return false, nil
+	}
+
 	client, err := directDBClient(opts.Insecure, opts.CACert)
 	if err != nil {
 		return false, err
@@ -51,19 +74,15 @@ func directUpdate(opts DBOptions) (bool, error) {
 	// Compare the listing with the installed database (same logic as the
 	// curator's isSupersededBy): keep the current DB unless the listing
 	// offers a newer build of the same schema model.
-	dbFile := filepath.Join(opts.Root, strconv.Itoa(dbv6.ModelVersion), dbv6.VulnerabilityDBFileName)
-	current, err := dbv6.ReadDescription(dbFile)
-	if err != nil && !errors.Is(err, dbv6.ErrDBDoesNotExist) {
-		logx.Warnf("cannot read installed vulnerability database metadata: %v (continuing with update)", err)
-		current = nil
-	}
 	if current != nil {
 		if !current.SchemaVersion.Valid() || latest.SchemaVersion.Model != current.SchemaVersion.Model {
 			logx.Warnf("listing is for a different DB schema (want %d, have %s); keeping the installed database", latest.SchemaVersion.Model, current.SchemaVersion)
+			setDirectUpdateCheck(opts.Root) // the check succeeded; record it
 			return false, nil
 		}
 		if !latest.Built.After(current.Built.Time) {
 			logx.Debugf("vulnerability DB already up to date (built %s)", current.Built)
+			setDirectUpdateCheck(opts.Root) // the check succeeded; record it
 			return false, nil
 		}
 	}
@@ -112,8 +131,40 @@ func directUpdate(opts DBOptions) (bool, error) {
 		return false, err
 	}
 
+	setDirectUpdateCheck(opts.Root)
 	logx.Infof("vulnerability DB installed (schema %s, built %s)", latest.SchemaVersion, latest.Built)
 	return true, nil
+}
+
+// directUpdateCheckAllowed reports whether an automatic update check is due:
+// the timestamp in <dbRoot>/<schema>/last_update_check must be older than
+// dbUpdateCheckMaxFrequency. A missing or unreadable file allows the check
+// (first run / IO errors must not block updates).
+func directUpdateCheckAllowed(dbRoot string) bool {
+	filePath := filepath.Join(dbRoot, strconv.Itoa(dbv6.ModelVersion), dbLastUpdateCheckFileName)
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return true
+	}
+	lastCheck, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data)))
+	if err != nil {
+		return true
+	}
+	return time.Since(lastCheck) > dbUpdateCheckMaxFrequency
+}
+
+// setDirectUpdateCheck records the current time as the last successful
+// update check, best-effort (the DB directory is expected to exist after a
+// successful check).
+func setDirectUpdateCheck(dbRoot string) {
+	dir := filepath.Join(dbRoot, strconv.Itoa(dbv6.ModelVersion))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	filePath := filepath.Join(dir, dbLastUpdateCheckFileName)
+	if err := os.WriteFile(filePath, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644); err != nil {
+		logx.Warnf("unable to write last update check timestamp: %v", err)
+	}
 }
 
 // directDBClient builds the HTTP client used by the direct grype DB download.

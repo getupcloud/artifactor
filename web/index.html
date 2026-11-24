@@ -31,6 +31,12 @@ header .spacer { flex: 1; }
   background: var(--panel2); border: 1px solid var(--border);
   border-radius: 999px; padding: 3px 12px; font-size: 12px; color: var(--muted);
 }
+.chip-btn {
+  background: none; border: none; color: inherit; padding: 0;
+  font-size: 13px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center;
+}
+.chip-btn:hover { color: var(--accent); }
+.chip-btn:disabled { color: var(--muted); opacity: .4; cursor: default; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .dot.scanned { background: var(--ok); }
 .dot.scanning { background: var(--run); animation: pulse 1.2s infinite; }
@@ -160,6 +166,24 @@ button.danger { background: var(--err); }
   width: 100%; background: var(--bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 13px;
 }
+.sidebar .head-row { display: flex; gap: 8px; align-items: center; }
+.sidebar .head-row input[type=search] { flex: 1; min-width: 0; }
+.icon-btn {
+  flex: 0 0 auto; background: var(--panel2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 6px; padding: 5px 8px; font-size: 12px; cursor: pointer;
+}
+.icon-btn:hover { color: var(--accent); border-color: var(--accent); }
+.sicon { width: 14px; height: 14px; display: block; }
+.sidebar-toggle .sicon { width: 16px; height: 16px; }
+.sidebar-toggle {
+  display: none; flex: 0 0 auto;
+  background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 8px; padding: 8px 10px; font-size: 14px; cursor: pointer;
+  position: sticky; top: 64px;
+}
+.sidebar-toggle:hover { color: var(--accent); border-color: var(--accent); }
+body.sidebar-hidden .sidebar { display: none; }
+body.sidebar-hidden .sidebar-toggle { display: flex; }
 .imglist { max-height: calc(100vh - 220px); overflow-y: auto; }
 .imgrow {
   display: flex; align-items: center; gap: 8px; padding: 7px 12px;
@@ -246,6 +270,9 @@ tr.expand-row:hover td { background: var(--bg); }
 .copy-btn:hover { color: var(--accent); border-color: var(--accent); }
 .exp-desc { color: var(--text); white-space: pre-wrap; }
 .exp-urls { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; word-break: break-all; }
+.exp-artifact { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; word-break: break-all; }
+.exp-artifact .exp-kind { color: var(--muted); }
+.exp-desc-head { margin-top: 10px; }
 .badge {
   display: inline-block; border-radius: 4px; padding: 1px 8px;
   font-size: 11px; font-weight: 700; color: #0f141a;
@@ -274,7 +301,9 @@ tr.expand-row:hover td { background: var(--bg); }
   <h1>Artifactor</h1>
   <span class="chip" id="version-chip">…</span>
   <span class="chip" id="mode-chip">…</span>
-  <span class="chip" id="db-chip">db: …</span>
+  <span class="chip" id="db-chip"><span id="db-chip-text">db: …</span>
+    <button class="chip-btn" id="db-update-btn" title="Update the vulnerability database now">🗘</button>
+  </span>
   <span class="chip" id="last-chip">last scan: never</span>
   <span class="status-chip" id="status-line"></span>
   <span class="spacer"></span>
@@ -394,9 +423,27 @@ tr.expand-row:hover td { background: var(--bg); }
 <div class="registry-stats" id="registry-stats"></div>
 
 <div class="layout">
+  <button class="sidebar-toggle" id="sidebar-toggle" title="Show the image list">
+    <svg class="sicon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M20 24H4C1.8 24 0 22.2 0 20V4C0 1.8 1.8 0 4 0h16c2.2 0 4 1.8 4 4v16c0 2.2-1.8 4-4 4zM4 2c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2H4z"/>
+      <path d="M8 24c-.6 0-1-.4-1-1V1c0-.6.4-1 1-1s1 .4 1 1v22c0 .6-.4 1-1 1z"/>
+      <path d="M17 13c-.3 0-.5-.1-.7-.3l-3-3c-.4-.4-.4-1 0-1.4s1-.4 1.4 0l3 3c.4.4.4 1 0 1.4-.2.2-.4.3-.7.3z"/>
+      <path d="M14 16c-.3 0-.5-.1-.7-.3-.4-.4-.4-1 0-1.4l3-3c.4-.4 1-.4 1.4 0s.4 1 0 1.4l-3 3c-.2.2-.4.3-.7.3z"/>
+    </svg>
+  </button>
   <aside class="sidebar">
     <div class="head">
-      <input type="search" id="img-search" placeholder="Filter images…">
+      <div class="head-row">
+        <input type="search" id="img-search" placeholder="Filter images…">
+        <button class="icon-btn" id="sidebar-hide" title="Hide the image list (expands the CVE area)">
+          <svg class="sicon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20 24H4C1.8 24 0 22.2 0 20V4C0 1.8 1.8 0 4 0h16c2.2 0 4 1.8 4 4v16c0 2.2-1.8 4-4 4zM4 2c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2H4z"/>
+            <path d="M8 24c-.6 0-1-.4-1-1V1c0-.6.4-1 1-1s1 .4 1 1v22c0 .6-.4 1-1 1z"/>
+            <path d="M14 13c-.3 0-.5-.1-.7-.3-.4-.4-.4-1 0-1.4l3-3c.4-.4 1-.4 1.4 0s.4 1 0 1.4l-3 3c-.2.2-.4.3-.7.3z"/>
+            <path d="M17 16c-.3 0-.5-.1-.7-.3l-3-3c-.4-.4-.4-1 0-1.4s1-.4 1.4 0l3 3c.4.4.4 1 0 1.4-.2.2-.4.3-.7.3z"/>
+          </svg>
+        </button>
+      </div>
     </div>
     <div class="imglist" id="imglist"></div>
   </aside>
@@ -659,9 +706,11 @@ async function refreshStatus() {
     $("version-chip").textContent = ver ? (ver === "dev" ? "dev" : "v" + ver) : "";
     $("mode-chip").textContent = state.status.mode || "unknown";
     const db = state.status.db || {};
-    $("db-chip").textContent = "db: " + (db.schemaVersion ? "v" + db.schemaVersion : "n/a")
+    $("db-chip-text").textContent = "db: " + (db.schemaVersion ? "v" + db.schemaVersion : "n/a")
       + (db.built ? " (built " + db.built.slice(0, 10) + ")" : "")
       + (db.error ? " — ERROR" : "");
+    $("db-update-btn").style.display = SNAPSHOT ? "none" : "";
+    $("db-update-btn").disabled = !!db.updating;
     const ls = state.status.lastScan || {};
     let lastText = "last scan: " + (state.status.lastScanDone
       ? new Date(state.status.lastScanDone).toLocaleString() : "never")
@@ -845,6 +894,13 @@ function showImgError(img) {
 
 $("img-error-close").onclick = () => $("img-error-modal").classList.remove("show");
 
+// hide/show the image sidebar (purely visual: filters and selection survive)
+function toggleSidebar(hidden) {
+  document.body.classList.toggle("sidebar-hidden", hidden);
+}
+$("sidebar-hide").onclick = () => toggleSidebar(true);
+$("sidebar-toggle").onclick = () => toggleSidebar(false);
+
 /* ---------- CVE table ---------- */
 
 // buildCVEsParams returns the query parameters of the current filters.
@@ -1016,6 +1072,16 @@ function toggleExpansion(tr, c) {
   const colspan = document.querySelectorAll("thead th").length;
   const urls = (c.urls || []).filter((u) => u !== c.dataSource);
   const images = c.images || [];
+  const locs = c.locations || [];
+  // artifact block: PURL + labeled file locations of the affected package
+  const artifactBlock = (c.purl || locs.length)
+    ? '<div class="exp-artifact">' +
+      '<div class="exp-label">ARTIFACT</div>' +
+      (c.purl ? '<div class="mono"><span class="exp-kind">purl:</span> ' + esc(c.purl) + "</div>" : "") +
+      (locs.length ? '<div class="mono">' + locs.map((l) =>
+        '<span class="exp-kind">' + esc((l.kind || "path") + ":") + "</span> " + esc(l.path)).join("<br>") + "</div>" : "") +
+      "</div>"
+    : "";
   const er = document.createElement("tr");
   er.className = "expand-row";
   er.innerHTML = '<td colspan="' + colspan + '"></td>';
@@ -1032,6 +1098,8 @@ function toggleExpansion(tr, c) {
         : "") +
       "</span>"
     ).join("") + "</div>" +
+    artifactBlock +
+    '<div class="exp-desc-head"><span class="exp-label">DESCRIPTION</span></div>' +
     '<div class="exp-desc">' + esc(c.description || "No description available.") + "</div>" +
     (urls.length
       ? '<div class="exp-urls">' + urls.slice(0, 5).map((u) => '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u) + "</a>").join(" ") + "</div>"
@@ -1136,6 +1204,22 @@ function showBannerInfo(msg) {
   banner.classList.add("show", "info");
 }
 
+// db-update-btn triggers a forced vulnerability DB update in the background;
+// the status poll reflects the progress via db.updating.
+$("db-update-btn").onclick = async () => {
+  try {
+    const res = await fetch("/api/db/update", { method: "POST" });
+    if (!res.ok) {
+      let msg = "DB update failed (HTTP " + res.status + ")";
+      try { msg = (await res.json()).error || msg; } catch { /* keep default */ }
+      showBannerError(msg);
+    } else {
+      showBannerInfo("Vulnerability DB update started.");
+    }
+  } catch { showBannerError("DB update request failed (server unreachable)."); }
+  refreshStatus();
+};
+
 $("export-btn").onclick = () => {
   if (SNAPSHOT) {
     // offline: serialize the current document with the merged snapshot
@@ -1181,7 +1265,7 @@ function csvField(v) {
 // filters (used in offline snapshot mode — not just the visible page).
 function downloadCSVClient() {
   const lines = [["Image", "Namespace", "Controller", "CVE", "Severity", "Package",
-    "Version", "Type", "Fixed In", "Matcher", "Description", "Data Source"]];
+    "Version", "Type", "PURL", "Location", "Fixed In", "Matcher", "Description", "Data Source"]];
   for (const c of snapshotFilterCVEs(buildCVEsParams())) {
     const insts = (c.images || []).filter((ref) => ref.image === c.image);
     lines.push([
@@ -1189,6 +1273,7 @@ function downloadCSVClient() {
       insts.map((i) => i.namespace).filter(Boolean).join("; "),
       insts.map((i) => i.controller).filter(Boolean).join("; "),
       c.id, c.severity, c.package, c.packageVersion, c.packageType,
+      c.purl || "", (c.locations || []).map((l) => l.path).join("; "),
       (c.fixedIn || []).join("; "), c.matcher || "", c.description || "", c.dataSource || "",
     ]);
   }

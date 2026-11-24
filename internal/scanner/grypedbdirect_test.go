@@ -11,11 +11,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 
+	dbv6 "github.com/anchore/grype/grype/db/v6"
 	"github.com/anchore/grype/grype/db/v6/distribution"
 )
 
@@ -335,5 +338,57 @@ func TestHumanSize(t *testing.T) {
 		if got := humanSize(n); got != want {
 			t.Errorf("humanSize(%d) = %q, want %q", n, got, want)
 		}
+	}
+}
+
+func lastUpdateCheckPath(dbRoot string) string {
+	return filepath.Join(dbRoot, strconv.Itoa(dbv6.ModelVersion), dbLastUpdateCheckFileName)
+}
+
+func TestDirectUpdateCheckAllowed(t *testing.T) {
+	root := t.TempDir()
+
+	// no file yet (first run) → check allowed
+	if !directUpdateCheckAllowed(root) {
+		t.Error("missing last_update_check: want check allowed")
+	}
+
+	// fresh timestamp → throttled
+	setDirectUpdateCheck(root)
+	if directUpdateCheckAllowed(root) {
+		t.Error("fresh last_update_check: want check throttled")
+	}
+
+	// older than the 2h window → allowed again
+	old := time.Now().UTC().Add(-3 * time.Hour).Format(time.RFC3339)
+	if err := os.WriteFile(lastUpdateCheckPath(root), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !directUpdateCheckAllowed(root) {
+		t.Error("3h-old last_update_check: want check allowed")
+	}
+
+	// unreadable content → allowed (must not block updates)
+	if err := os.WriteFile(lastUpdateCheckPath(root), []byte("not-a-timestamp"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !directUpdateCheckAllowed(root) {
+		t.Error("invalid last_update_check: want check allowed")
+	}
+}
+
+func TestSetDirectUpdateCheck(t *testing.T) {
+	root := t.TempDir()
+	setDirectUpdateCheck(root)
+	data, err := os.ReadFile(lastUpdateCheckPath(root))
+	if err != nil {
+		t.Fatalf("last_update_check not written: %v", err)
+	}
+	ts, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("last_update_check is not RFC3339: %q", data)
+	}
+	if time.Since(ts) > time.Minute {
+		t.Errorf("last_update_check is not recent: %s", ts)
 	}
 }

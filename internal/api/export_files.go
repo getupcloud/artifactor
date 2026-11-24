@@ -110,9 +110,11 @@ func (s *Server) buildGrypeReport(image string, res scanner.Result) grypeReport 
 				Fix:         fix,
 			},
 			Artifact: grypeArtifact{
-				Name:    c.PackageName,
-				Version: c.PackageVersion,
-				Type:    c.PackageType,
+				Name:      c.PackageName,
+				Version:   c.PackageVersion,
+				Type:      c.PackageType,
+				PURL:      c.PURL,
+				Locations: locationPaths(c.Locations),
 			},
 			MatchDetails: []grypeMatchDetail{{Matcher: c.Matcher}},
 		})

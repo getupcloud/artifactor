@@ -103,6 +103,7 @@ Dockerfile / Makefile       build de la imagen y automatización
 | GET | `/api/namespaces` | namespaces distintos de los workloads de las imágenes escaneadas |
 | GET | `/api/artifacts?image=&q=` | nombres distintos de artefactos (paquetes) encontrados por syft |
 | POST | `/api/scan` | lanza un reescaneo de todas las imágenes |
+| POST | `/api/db/update` | fuerza una actualización de la DB de grype en segundo plano (ignora la ventana de 2h; 409 si ya hay una en curso) |
 | GET | `/api/export` | descarga el informe como un **único HTML autocontenido** (datos embebidos; funciona sin conexión) |
 | GET | `/healthz` | liveness/readiness |
 

@@ -17,6 +17,9 @@ type DBOptions struct {
 	AppVersion string // version string sent in the User-Agent header
 	CACert     string // path to a PEM CA certificate used to verify the DB server ("" = system roots)
 	AutoUpdate bool   // download/update the DB when it is missing or outdated
+	// Force bypasses the update check throttle (the 2h last_update_check
+	// TTL): used by manual updates requested from the UI.
+	Force bool
 	// DirectDownload fetches the listing (latest.json) and the DB archive
 	// directly with net/http, instead of using the grype download library.
 	// Insecure controls TLS verification for that download.
@@ -40,13 +43,17 @@ type DBStatus struct {
 // stale database is preferred over no database and updates come from the
 // default anchore distribution endpoint. A non-empty caCert (path to a PEM
 // file) is used to verify the download server instead of the system roots.
-func newCurator(dbRoot, appVersion, caCert string) (dbv6.Curator, error) {
+func newCurator(dbRoot, appVersion, caCert string, force bool) (dbv6.Curator, error) {
 	installGrypeLogger() // show the DB download/update progress via logx
 
 	cfg := installation.DefaultConfig(clio.Identification{Name: "artifactor", Version: appVersion})
 	cfg.DBRootDir = dbRoot
 	cfg.ValidateAge = false // a stale DB is better than no DB
 	cfg.MaxAllowedBuiltAge = 90 * 24 * time.Hour
+	if force {
+		// manual update: no check frequency limit (0 = always allowed)
+		cfg.UpdateCheckMaxFrequency = 0
+	}
 
 	clientCfg := distribution.DefaultConfig()
 	clientCfg.ID = clio.Identification{Name: "artifactor", Version: appVersion}
@@ -65,7 +72,7 @@ func newCurator(dbRoot, appVersion, caCert string) (dbv6.Curator, error) {
 func NewProvider(opts DBOptions) (vulnerability.Provider, DBStatus, error) {
 	status := DBStatus{Dir: opts.Root}
 
-	curator, err := newCurator(opts.Root, opts.AppVersion, opts.CACert)
+	curator, err := newCurator(opts.Root, opts.AppVersion, opts.CACert, opts.Force)
 	if err != nil {
 		return nil, status, fmt.Errorf("create db curator: %w", err)
 	}
@@ -104,7 +111,7 @@ func NewProvider(opts DBOptions) (vulnerability.Provider, DBStatus, error) {
 func RefreshDB(opts DBOptions) (updated bool, provider vulnerability.Provider, status DBStatus, err error) {
 	status = DBStatus{Dir: opts.Root}
 
-	curator, err := newCurator(opts.Root, opts.AppVersion, opts.CACert)
+	curator, err := newCurator(opts.Root, opts.AppVersion, opts.CACert, opts.Force)
 	if err != nil {
 		return false, nil, status, fmt.Errorf("create db curator: %w", err)
 	}

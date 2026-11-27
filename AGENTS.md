@@ -76,6 +76,12 @@
 - `deploy/` — namespace/SA/RBAC/deployment/service + templates
   (`dbca.yaml.tmpl`, `openshift.yaml.tmpl`, `imagepullsecret.yaml.tmpl`,
   `servicemonitor.yaml.tmpl`, `prometheusrule.yaml.tmpl`).
+- `chart/artifactor/` — Helm chart com os mesmos recursos do `install`
+  (SA/ClusterRole/ClusterRoleBinding/Deployment/Service + ServiceMonitor,
+  PrometheusRule, SCC do OpenShift, ConfigMap do CA do banco e
+  imagePullSecret opcionais; valores em `values.yaml`, helpers
+  `_helpers.tpl`, nomes via `fullnameOverride`/`nameOverride`; `appVersion`
+  acompanha o `VERSION` do Makefile).
 - `.goreleaser.yaml`, `Makefile`, `Dockerfile` (imagem de produção),
   `Dockerfile.session` (container de sessão: `make build-session`),
   `SESSION.md` (bootstrap de sessão — aponta para este arquivo),
@@ -346,4 +352,5 @@
   "DESCRIPTION"; `artifact.purl`/`artifact.locations` no grype JSON
   exportado), toggle para esconder a sidebar de imagens e expandir a área
   de CVEs, TTL de 2h nos updates automáticos do banco (`last_update_check`)
-  e botão 🗘 no chip do DB para atualizar na hora.)
+  e botão 🗘 no chip do DB para atualizar na hora, Helm chart em
+  `chart/artifactor/`.)

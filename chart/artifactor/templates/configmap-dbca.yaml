@@ -1,0 +1,15 @@
+# ConfigMap carrying the CA certificate that authenticates the grype
+# vulnerability DB download server. Created only when dbCaCert is set;
+# mounted into the deployment at /etc/artifactor/ca.
+{{- if .Values.dbCaCert }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "artifactor.fullname" . }}-db-ca
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "artifactor.labels" . | nindent 4 }}
+data:
+  ca.crt: |
+    {{- .Values.dbCaCert | nindent 4 }}
+{{- end }}

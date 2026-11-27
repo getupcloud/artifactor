@@ -1,0 +1,80 @@
+# OpenShift/OKD: SecurityContextConstraints + RBAC that let the artifactor
+# service account run its pod (uid/gid 65532, emptyDir volume for the grype
+# DB). Created only when openshift.enabled is true; requires cluster-admin.
+{{- if .Values.openshift.enabled }}
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: {{ include "artifactor.fullname" . }}
+  labels:
+    {{- include "artifactor.labels" . | nindent 4 }}
+  annotations:
+    kubernetes.io/description: Allows artifactor to run as uid/gid 65532 with its own volumes (emptyDir for the grype DB).
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+fsGroup:
+  type: MustRunAs
+  ranges:
+    - min: 65532
+      max: 65532
+priority: null
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - ALL
+runAsUser:
+  type: MustRunAs
+  uid: 65532
+seLinuxContext:
+  type: MustRunAs
+seccompProfiles:
+  - runtime/default
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+    - min: 65532
+      max: 65532
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - projected
+  - secret
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "artifactor.fullname" . }}-scc
+  labels:
+    {{- include "artifactor.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - {{ include "artifactor.fullname" . }}
+    verbs:
+      - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "artifactor.fullname" . }}-scc
+  labels:
+    {{- include "artifactor.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "artifactor.fullname" . }}-scc
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "artifactor.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

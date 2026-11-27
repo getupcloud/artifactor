@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "artifactor.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "artifactor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "artifactor.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "artifactor.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "artifactor.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.imagePullSecret.create }}
+      imagePullSecrets:
+        - name: {{ include "artifactor.fullname" . }}-image-token
+      {{- end }}
+      containers:
+        - name: scanner
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9090
+          env:
+            - name: DB_DIR
+              value: {{ .Values.dbDir | quote }}
+            # save every successful scan under /data/history (survives
+            # container restarts; dies with the pod — emptyDir)
+            - name: HISTORY_DIR
+              value: {{ .Values.historyDir | quote }}
+            # shown in the execution logs and report title (optional)
+            - name: CUSTOMER_NAME
+              value: {{ .Values.customerName | quote }}
+            - name: CLUSTER_NAME
+              value: {{ .Values.clusterName | quote }}
+            - name: SCAN_INTERVAL
+              value: {{ .Values.scanInterval | quote }}
+            - name: CONCURRENCY
+              value: {{ .Values.concurrency | quote }}
+            # skip the EC2 IMDS fallback when no IRSA/web-identity creds
+            # exist: fail fast instead of timing out on the metadata service
+            - name: AWS_EC2_METADATA_DISABLED
+              value: {{ .Values.awsEc2MetadataDisabled | quote }}
+            # the pod never serves SBOM exports (only the one-shot CLI does):
+            # drop the per-image SBOM bytes to save memory
+            - name: KEEP_SBOM
+              value: {{ .Values.keepSbom | quote }}
+            # the installed deployment logs one line per HTTP request
+            # (SPA/API and metrics); local runs default to off (--access-log)
+            - name: ACCESS_LOG
+              value: {{ .Values.accessLog | quote }}
+            {{- if .Values.dbCaCert }}
+            # path to a PEM CA certificate for the grype DB download server
+            - name: DB_CA_CERT
+              value: "/etc/artifactor/ca/ca.crt"
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          volumeMounts:
+            - name: data
+              mountPath: /data # writable dir for the grype vulnerability DB and scan temp files
+            {{- if .Values.dbCaCert }}
+            - name: db-ca
+              mountPath: /etc/artifactor/ca
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          emptyDir: {}
+        {{- if .Values.dbCaCert }}
+        - name: db-ca
+          configMap:
+            name: {{ include "artifactor.fullname" . }}-db-ca
+        {{- end }}

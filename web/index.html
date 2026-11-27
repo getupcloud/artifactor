@@ -113,8 +113,8 @@ button.danger { background: var(--err); }
 .modal .error.show { display: block; }
 .clusterbar .hint { font-size: 12px; color: #ffb3b5; word-break: break-word; }
 .sec-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
-.vex-count { font-size: 12px; color: var(--muted); }
-.cluster-sec, .vex-sec { display: inline-flex; flex-direction: column; gap: 4px; }
+.vex-count, .hist-count { font-size: 12px; color: var(--muted); }
+.cluster-sec, .vex-sec, .hist-sec { display: inline-flex; flex-direction: column; gap: 4px; }
 .sec-row { display: inline-flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .vex-sec .sec-row { gap: 6px; align-items: center; }
 .vex-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
@@ -125,6 +125,43 @@ button.danger { background: var(--err); }
   display: flex; flex-direction: column; gap: 3px;
 }
 .vex-item.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+/* scan history dialog */
+.hist-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.hist-toolbar .sec-title { margin-right: auto; }
+.hist-chart { position: relative; margin-bottom: 8px; }
+.hist-svg { display: block; }
+.hist-grid { stroke: var(--border); stroke-width: 1; }
+.hist-label { fill: var(--muted); font-size: 10px; }
+.hist-cursor { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.hist-tip {
+  display: none; position: absolute; top: 4px; z-index: 5; pointer-events: none;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; font-size: 11.5px; color: var(--text); white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+}
+.hist-tip-date { color: var(--muted); margin-bottom: 4px; }
+.hist-tip-row { display: flex; align-items: center; gap: 5px; }
+.hist-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; font-size: 11.5px; color: var(--muted); }
+.hist-leg { display: inline-flex; align-items: center; gap: 5px; }
+.hist-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.hist-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; margin-top: 12px; }
+.hist-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 12.5px;
+}
+.hist-row:hover { border-color: var(--accent); }
+.hist-row.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.hist-date { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; min-width: 148px; }
+.hist-total { color: var(--text); }
+.hist-where { color: var(--muted); word-break: break-all; }
+.hist-sevs { display: inline-flex; gap: 4px; margin-left: auto; }
+.hs { min-width: 18px; text-align: center; border-radius: 4px; padding: 1px 4px; font-size: 10.5px; font-weight: 700; color: #0f141a; }
+.hs.critical { background: var(--critical); }
+.hs.high { background: var(--high); }
+.hs.medium { background: var(--medium); }
+.hs.low { background: var(--low); }
+.hs.negligible { background: var(--negligible); color: #dbe4ee; }
+.hs.unknown { background: var(--unknown); color: #dbe4ee; }
 .vex-item .vname { font-weight: 600; word-break: break-all; }
 .vex-item .vsum { color: var(--muted); }
 .stats {
@@ -337,6 +374,14 @@ tr.expand-row:hover td { background: var(--bg); }
       <input type="file" id="vex-file-input" accept=".json,application/json" multiple hidden>
     </span>
   </span>
+  <span class="vex-sep" id="hist-sep"></span>
+  <span class="hist-sec" id="hist-sec">
+    <span class="sec-title">History</span>
+    <span class="hist-count" id="hist-stats"></span>
+    <span class="sec-row">
+      <button class="secondary" id="history-btn" title="Saved scans: chart of CVE counts over time and load a past scan">History</button>
+    </span>
+  </span>
 </div>
 
 <div class="modal-overlay" id="add-modal">
@@ -388,6 +433,23 @@ tr.expand-row:hover td { background: var(--bg); }
     <pre class="img-error-body" id="img-error-body"></pre>
     <div class="actions">
       <button class="secondary" id="img-error-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="history-modal">
+  <div class="modal wide">
+    <h3>Scan history</h3>
+    <div class="hist-toolbar">
+      <span class="sec-title">CVEs per scan</span>
+      <button class="secondary" id="hist-line-btn" title="Line chart">Line</button>
+      <button class="secondary" id="hist-bar-btn" title="Bar chart">Bar</button>
+    </div>
+    <div class="hist-chart" id="hist-chart"></div>
+    <div class="hist-list" id="hist-list"></div>
+    <div class="error" id="hist-error"></div>
+    <div class="actions">
+      <button class="secondary" id="hist-close">Close</button>
     </div>
   </div>
 </div>
@@ -544,6 +606,11 @@ const SNAPSHOT = (() => {
   return merged;
 })();
 
+// historyData holds the snapshot of a saved scan loaded via the History
+// dialog: the data endpoints are answered from it (no page refresh) while
+// the rest of the app stays live. null = live data.
+let historyData = null;
+
 const SEV_RANK = Object.fromEntries(SEVS.map((s, i) => [s, i]));
 
 // compareCVEs mirrors the server sort comparator for one column.
@@ -564,7 +631,7 @@ function defaultCVECompare(a, b) {
   return compareCVEs(a, b, "severity") || compareCVEs(a, b, "package") || compareCVEs(a, b, "cve");
 }
 
-function snapshotFilterCVEs(params) {
+function snapshotFilterCVEs(params, data = SNAPSHOT) {
   const image = params.get("image") || "";
   const namespace = params.get("namespace") || "";
   const artifact = (params.get("artifact") || "").toLowerCase();
@@ -575,7 +642,7 @@ function snapshotFilterCVEs(params) {
   const excluded = (params.get("exclude") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const fixedOnly = params.get("fixed") === "1";
   const excludeVex = params.get("exclude-vex") === "1";
-  const rows = (SNAPSHOT.cves || []).filter((c) =>
+  const rows = ((data && data.cves) || []).filter((c) =>
     (!image || c.image === image) &&
     (!namespace || (c.images || []).some((ref) => ref.image === c.image && ref.namespace === namespace)) &&
     (!artifact || (c.package || "").toLowerCase().includes(artifact)) &&
@@ -589,21 +656,21 @@ function snapshotFilterCVEs(params) {
   return rows;
 }
 
-function snapshotAPI(path) {
+function snapshotAPI(path, data = SNAPSHOT) {
   const url = new URL(path, "http://localhost");
   switch (url.pathname) {
     case "/api/status":
-      return Promise.resolve(SNAPSHOT.status || {});
+      return Promise.resolve((data && data.status) || {});
     case "/api/images":
-      return Promise.resolve(SNAPSHOT.images || []);
+      return Promise.resolve((data && data.images) || []);
     case "/api/cves":
-      return Promise.resolve(snapshotFilterCVEs(url.searchParams));
+      return Promise.resolve(snapshotFilterCVEs(url.searchParams, data));
     case "/api/cves-page": {
       // offline pagination: filter + sort everything client-side, then slice
       // the requested page (same shape as the live endpoint)
       const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
       const pageSize = Math.min(500, Math.max(1, parseInt(url.searchParams.get("pageSize") || "100", 10) || 100));
-      const rows = snapshotFilterCVEs(url.searchParams);
+      const rows = snapshotFilterCVEs(url.searchParams, data);
       const sortKey = url.searchParams.get("sort") || "";
       const desc = url.searchParams.get("dir") === "desc";
       if (sortKey) {
@@ -619,15 +686,15 @@ function snapshotAPI(path) {
       return Promise.resolve({ rows: rows.slice(start, start + pageSize), total, page: p, pageSize });
     }
     case "/api/namespaces":
-      return Promise.resolve(SNAPSHOT.namespaces || []);
+      return Promise.resolve((data && data.namespaces) || []);
     case "/api/named-vulns":
-      return Promise.resolve(SNAPSHOT.namedVulns || []);
+      return Promise.resolve((data && data.namedVulns) || []);
     case "/api/artifacts": {
       const image = url.searchParams.get("image") || "";
       const q = (url.searchParams.get("q") || "").toLowerCase();
-      const names = image && SNAPSHOT.artifactsByImage && SNAPSHOT.artifactsByImage[image]
-        ? SNAPSHOT.artifactsByImage[image]
-        : (SNAPSHOT.artifacts || []);
+      const names = image && data && data.artifactsByImage && data.artifactsByImage[image]
+        ? data.artifactsByImage[image]
+        : ((data && data.artifacts) || []);
       return Promise.resolve(names.filter((n) => !q || n.toLowerCase().includes(q)));
     }
     default:
@@ -656,6 +723,9 @@ const state = {
   selectedCluster: "", // name of the cluster the scan targets
   vexFiles: [],        // uploaded VEX documents (name/format/summary)
   selectedVex: "",     // selected document in the VEX dialog
+  historyName: "",     // loaded history scan entry ("" = live data)
+  historyScan: null,   // summary of the loaded scan (cluster/context/date)
+  historyChartMode: "line", // history chart: "line" or "bar"
 };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
@@ -683,8 +753,18 @@ const fmtDuration = (sec) => {
   return h + "h" + (m % 60) + "m";
 };
 
+// historyDataPaths are the data endpoints answered from a loaded history
+// snapshot; every other endpoint stays live while viewing history.
+const historyDataPaths = new Set([
+  "/api/status", "/api/images", "/api/cves", "/api/cves-page",
+  "/api/namespaces", "/api/named-vulns", "/api/artifacts",
+]);
+
 async function api(path) {
   if (SNAPSHOT) return snapshotAPI(path);
+  if (historyData && historyDataPaths.has(new URL(path, "http://localhost").pathname)) {
+    return snapshotAPI(path, historyData);
+  }
   const res = await fetch(path);
   if (!res.ok) throw new Error(path + " -> HTTP " + res.status);
   return res.json();
@@ -695,6 +775,12 @@ async function api(path) {
 async function refreshStatus() {
   try {
     state.status = await api("/api/status");
+    // the History section only shows when the backend was started with
+    // --history-dir (status.history). It stays visible while viewing a
+    // historical scan, whose snapshot status may predate the flag.
+    const showHist = !!historyData || state.status.history === true;
+    $("hist-sec").style.display = showHist ? "" : "none";
+    $("hist-sep").style.display = showHist ? "" : "none";
     const titleParts = ["Artifactor"];
     if (state.status.customer) titleParts.push(state.status.customer);
     if (state.status.cluster) titleParts.push(state.status.cluster);
@@ -710,7 +796,8 @@ async function refreshStatus() {
       + (db.built ? " (built " + db.built.slice(0, 10) + ")" : "")
       + (db.error ? " — ERROR" : "");
     $("db-update-btn").style.display = SNAPSHOT ? "none" : "";
-    $("db-update-btn").disabled = !!db.updating;
+    $("db-update-btn").disabled = !!db.updating || !!historyData;
+    $("db-update-btn").title = historyData ? "Exit the history view to update the DB" : "Update the vulnerability database now";
     const ls = state.status.lastScan || {};
     let lastText = "last scan: " + (state.status.lastScanDone
       ? new Date(state.status.lastScanDone).toLocaleString() : "never")
@@ -746,21 +833,31 @@ async function refreshStatus() {
     const dbUpdating = !!db.updating;
     // the button stays enabled during a scan (it becomes the cancel
     // button); while the vulnerability DB is updating or a cancel is
-    // finishing, it is blocked
-    $("scan-btn").disabled = !state.loaded || (dbUpdating && !scanning) || cancelling;
-    $("scan-btn").title = cancelling
-      ? "Cancelling the scan…"
-      : dbUpdating && !scanning
-        ? "The vulnerability DB is still updating"
-        : "Scan every image in the cluster";
-    $("scan-btn").textContent = cancelling ? "Cancelling…" : scanning ? "Cancel scan" : "Scan now";
-    $("scan-btn").classList.toggle("danger", scanning);
+    // finishing, it is blocked. In the history view it becomes the
+    // "Back to live" exit button.
+    $("scan-btn").disabled = historyData
+      ? false
+      : !state.loaded || (dbUpdating && !scanning) || cancelling;
+    $("scan-btn").title = historyData
+      ? "Return to the live scan results"
+      : cancelling
+        ? "Cancelling the scan…"
+        : dbUpdating && !scanning
+          ? "The vulnerability DB is still updating"
+          : "Scan every image in the cluster";
+    $("scan-btn").textContent = historyData
+      ? "Back to live"
+      : cancelling ? "Cancelling…" : scanning ? "Cancel scan" : "Scan now";
+    $("scan-btn").classList.toggle("danger", scanning && !historyData);
     // cluster management is suspended while a scan runs (the scan uses the
-    // client captured at start)
-    $("cluster-select").disabled = scanning;
-    $("context-select").disabled = scanning;
-    $("add-cluster-btn").disabled = scanning;
-    $("remove-cluster-btn").disabled = scanning;
+    // client captured at start) and while viewing a historical scan (the
+    // shown data is frozen)
+    $("cluster-select").disabled = scanning || !!historyData;
+    $("context-select").disabled = scanning || !!historyData;
+    $("add-cluster-btn").disabled = scanning || !!historyData;
+    $("remove-cluster-btn").disabled = scanning || !!historyData;
+    $("add-vex-btn").disabled = !!historyData;
+    $("vex-files-btn").disabled = !!historyData;
   } catch (e) {
     // backend unreachable: surface it on the status line (the next
     // successful status poll clears it)
@@ -780,6 +877,11 @@ function renderStatusLine() {
   if (SNAPSHOT) {
     line.classList.remove("error", "idle");
     line.innerHTML = "";
+    return;
+  }
+  if (historyData) {
+    line.classList.remove("error", "idle");
+    line.innerHTML = '<span class="dot queued"></span> Viewing history: ' + esc(state.historyName || "");
     return;
   }
   const st = state.status || {};
@@ -1151,6 +1253,11 @@ async function loadArtifacts() {
 /* ---------- actions ---------- */
 
 $("scan-btn").onclick = async () => {
+  // while viewing a historical scan the button exits back to live data
+  if (historyData) {
+    exitHistory();
+    return;
+  }
   // during a scan the button cancels it: the "Cancelling" state is only
   // entered after the backend confirms the cancel, and the button stays
   // blocked until the backend reports the run finished
@@ -1220,12 +1327,233 @@ $("db-update-btn").onclick = async () => {
   refreshStatus();
 };
 
+/* ---------- scan history ---------- */
+
+let historyEntries = [];
+
+// fmtHistDate renders a scan timestamp as MM-DD HH:MM (local time).
+function fmtHistDate(iso) {
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, "0");
+  return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+// fmtHistFullDate renders a scan timestamp as YYYY/MM/DD HH:MM:SS (local
+// time), used by the history dialog list.
+function fmtHistFullDate(iso) {
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "/" + p(d.getMonth() + 1) + "/" + p(d.getDate()) +
+    " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+}
+
+// historySeries is the chart series order; the colors are CSS variables
+// (inline style attributes, so they resolve inside the SVG).
+const historySeries = ["total", "critical", "high", "medium", "low", "negligible", "unknown"];
+const historySeriesColors = {
+  total: "var(--accent)", critical: "var(--critical)", high: "var(--high)",
+  medium: "var(--medium)", low: "var(--low)", negligible: "var(--negligible)", unknown: "var(--unknown)",
+};
+
+// renderHistoryChart draws the CVE count evolution as an SVG line or bar
+// chart (x = scan date, y = CVE count), one series per severity plus the
+// total. Vanilla SVG: works offline in exported reports.
+function renderHistoryChart(mode) {
+  const box = $("hist-chart");
+  box.innerHTML = "";
+  const entries = historyEntries.slice().sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
+  if (!entries.length) {
+    box.textContent = "No saved scans yet.";
+    return;
+  }
+  const W = Math.max(320, box.clientWidth || 640);
+  const H = 260, padL = 46, padR = 8, padT = 8, padB = 34;
+  const max = Math.max(1, ...entries.flatMap((e) => historySeries.map((k) => e[k] || 0)));
+  const x = (i) => padL + (W - padL - padR) * (entries.length === 1 ? 0.5 : i / (entries.length - 1));
+  const y = (v) => padT + (H - padT - padB) * (1 - v / max);
+  let svg = '<svg class="hist-svg" viewBox="0 0 ' + W + " " + H + '" width="100%" height="' + H + '">';
+  for (let g = 0; g <= 4; g++) {
+    const v = max * g / 4, gy = y(v);
+    svg += '<line x1="' + padL + '" y1="' + gy + '" x2="' + (W - padR) + '" y2="' + gy + '" class="hist-grid"/>' +
+      '<text x="' + (padL - 6) + '" y="' + (gy + 4) + '" class="hist-label" text-anchor="end">' + Math.round(v) + "</text>";
+  }
+  // x labels (dates), spaced out when there are many scans
+  const step = Math.max(1, Math.ceil(entries.length / 8));
+  entries.forEach((e, i) => {
+    if (i % step !== 0 && i !== entries.length - 1) return;
+    svg += '<text x="' + x(i) + '" y="' + (H - 8) + '" class="hist-label" text-anchor="middle">' + esc(fmtHistDate(e.startedAt)) + "</text>";
+  });
+  if (mode === "bar") {
+    const slot = (W - padL - padR) / entries.length;
+    const bw = Math.max(2, Math.min(14, slot * 0.7 / historySeries.length));
+    entries.forEach((e, i) => {
+      historySeries.forEach((k, j) => {
+        const bx = padL + slot * i + slot * 0.15 + j * bw;
+        const by = y(e[k] || 0);
+        svg += '<rect x="' + bx.toFixed(1) + '" y="' + by.toFixed(1) + '" width="' + (bw - 1).toFixed(1) + '" height="' + Math.max(0, H - padT - padB - by).toFixed(1) + '" style="fill:' + historySeriesColors[k] + '"/>';
+      });
+    });
+  } else {
+    for (const k of historySeries) {
+      const pts = entries.map((e, i) => x(i).toFixed(1) + "," + y(e[k] || 0).toFixed(1)).join(" ");
+      svg += '<polyline points="' + pts + '" style="stroke:' + historySeriesColors[k] + ';fill:none" stroke-width="2"/>';
+      entries.forEach((e, i) => {
+        svg += '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(e[k] || 0).toFixed(1) + '" r="2.5" style="fill:' + historySeriesColors[k] + '"/>';
+      });
+    }
+  }
+  svg += '<line class="hist-cursor" x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (H - padB) + '" visibility="hidden"/>';
+  svg += "</svg>";
+  box.innerHTML = svg +
+    '<div class="hist-legend">' +
+    historySeries.map((k) => '<span class="hist-leg"><span class="hist-swatch" style="background:' + historySeriesColors[k] + '"></span>' + k + "</span>").join("") +
+    "</div>";
+  // hover: show the values of the scan nearest to the pointer, with a
+  // dashed cursor line at its x position (line and bar modes)
+  const svgEl = box.querySelector("svg");
+  const cursor = svgEl.querySelector(".hist-cursor");
+  const tip = document.createElement("div");
+  tip.className = "hist-tip";
+  box.appendChild(tip);
+  const slot = (W - padL - padR) / entries.length;
+  const snapIndex = (mx) => {
+    if (entries.length === 1) return 0;
+    const i = mode === "bar"
+      ? Math.floor((mx - padL) / slot)
+      : Math.round((mx - padL) / ((W - padL - padR) / (entries.length - 1)));
+    return Math.max(0, Math.min(entries.length - 1, i));
+  };
+  const snapX = (i) => mode === "bar" ? padL + slot * i + slot / 2 : x(i);
+  svgEl.addEventListener("mousemove", (ev) => {
+    const rect = svgEl.getBoundingClientRect();
+    const mx = (ev.clientX - rect.left) * W / rect.width;
+    if (mx < padL || mx > W - padR) {
+      tip.style.display = "none";
+      cursor.setAttribute("visibility", "hidden");
+      return;
+    }
+    const i = snapIndex(mx);
+    const e = entries[i];
+    const px = snapX(i);
+    cursor.setAttribute("x1", px);
+    cursor.setAttribute("x2", px);
+    cursor.setAttribute("visibility", "visible");
+    tip.innerHTML = '<div class="hist-tip-date">' + esc(fmtHistFullDate(e.startedAt)) + "</div>" +
+      historySeries.map((k) => '<div class="hist-tip-row"><span class="hist-swatch" style="background:' + historySeriesColors[k] + '"></span>' + k + ": " + (e[k] || 0) + "</div>").join("");
+    tip.style.display = "block";
+    const left = rect.width * px / W + 14;
+    tip.style.left = (left + tip.offsetWidth > rect.width - 4 ? rect.width * px / W - tip.offsetWidth - 14 : left) + "px";
+  });
+  svgEl.addEventListener("mouseleave", () => {
+    tip.style.display = "none";
+    cursor.setAttribute("visibility", "hidden");
+  });
+}
+
+// renderHistoryList lists the saved scans (newest first); clicking one
+// loads its data into the view without a page refresh.
+function renderHistoryList() {
+  const list = $("hist-list");
+  list.innerHTML = "";
+  for (const e of historyEntries) {
+    const row = document.createElement("div");
+    row.className = "hist-row" + (historyData && state.historyName === e.name ? " active" : "");
+    const where = [e.cluster, e.context].filter(Boolean).join(" · ");
+    row.innerHTML = '<span class="hist-date">' + esc(fmtHistFullDate(e.startedAt)) + "</span>" +
+      (where ? '<span class="hist-where">' + esc(where) + "</span>" : "") +
+      '<span class="hist-total">' + e.total + " CVE(s)</span>" +
+      '<span class="hist-sevs">' + SEVS.map((s) => '<span class="hs ' + s + '" title="' + s + '">' + (e[s] || 0) + "</span>").join("") + "</span>";
+    row.onclick = () => loadHistoryScan(e.name);
+    list.appendChild(row);
+  }
+}
+
+// loadHistoryScan switches the view to the data of one saved scan: only
+// the shown data changes (no page refresh, no rescan). The scan button
+// becomes "Back to live" to exit.
+async function loadHistoryScan(name) {
+  const entry = historyEntries.find((e) => e.name === name);
+  let data;
+  try {
+    const res = await fetch("/api/history/" + name);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    data = await res.json();
+  } catch {
+    showBannerError("Failed to load scan history entry.");
+    return;
+  }
+  historyData = data;
+  state.historyName = name;
+  state.historyScan = entry || null;
+  state.selected = "";
+  expanded.clear();
+  $("history-modal").classList.remove("show");
+  showBannerInfo("Showing historical scan from " + (entry ? fmtHistDate(entry.startedAt) : name) + ".");
+  renderHistoryStats();
+  poll();
+}
+
+// exitHistory restores the live data.
+function exitHistory() {
+  historyData = null;
+  state.historyName = "";
+  state.historyScan = null;
+  poll();
+  renderHistoryStats();
+  showBannerInfo("Back to live data.");
+}
+
+// renderHistoryStats shows the number of saved scans in the cluster bar;
+// while viewing a historical scan it also shows that scan's cluster,
+// context and date.
+function renderHistoryStats() {
+  const n = historyEntries.length;
+  let text = n + (n === 1 ? " scan" : " scans");
+  if (state.historyScan) {
+    const parts = [state.historyScan.cluster, state.historyScan.context,
+      fmtHistDate(state.historyScan.startedAt)].filter(Boolean);
+    if (parts.length) text += " · " + parts.join(" · ");
+  }
+  $("hist-stats").textContent = text;
+}
+
+// loadHistoryCount refreshes the saved-scan count shown in the cluster bar.
+async function loadHistoryCount() {
+  try {
+    const res = await fetch("/api/history");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    historyEntries = (await res.json()).entries || [];
+  } catch { return; }
+  renderHistoryStats();
+}
+
+// openHistory loads the saved scans and renders the chart and list.
+async function openHistory() {
+  $("history-modal").classList.add("show");
+  $("hist-error").textContent = "";
+  let data;
+  try { data = await (await fetch("/api/history")).json(); }
+  catch { $("hist-error").textContent = "Failed to load the scan history."; return; }
+  historyEntries = data.entries || [];
+  renderHistoryStats();
+  renderHistoryChart(state.historyChartMode);
+  renderHistoryList();
+}
+$("history-btn").onclick = openHistory;
+$("hist-close").onclick = () => $("history-modal").classList.remove("show");
+$("hist-line-btn").onclick = () => { state.historyChartMode = "line"; renderHistoryChart("line"); };
+$("hist-bar-btn").onclick = () => { state.historyChartMode = "bar"; renderHistoryChart("bar"); };
+
 $("export-btn").onclick = () => {
-  if (SNAPSHOT) {
+  if (SNAPSHOT || historyData) {
     // offline: serialize the current document with the merged snapshot
     // embedded inline, replacing the external scan-data chunk scripts, so
     // the downloaded file stays self-contained
     const doc = document.documentElement.cloneNode(true);
+    // exported snapshots have no cluster bar (the serialized document may
+    // come from a live view where it is visible)
+    const bar = doc.getElementById("cluster-bar");
+    if (bar) bar.classList.remove("show");
     const partScripts = doc.querySelectorAll('script[src^="scan-data-"]');
     if (partScripts.length) {
       const anchor = partScripts[0];
@@ -1234,7 +1562,7 @@ $("export-btn").onclick = () => {
       const script = document.createElement("script");
       script.id = "__artifactor_data";
       script.type = "application/json";
-      script.textContent = JSON.stringify(SNAPSHOT).replace(/<\//g, "<\\/");
+      script.textContent = JSON.stringify(historyData || SNAPSHOT).replace(/<\//g, "<\\/");
       anchor.parentNode.insertBefore(script, ref);
     }
     const blob = new Blob(["<!DOCTYPE html>\n" + doc.outerHTML], { type: "text/html" });
@@ -1249,7 +1577,7 @@ $("export-btn").onclick = () => {
 };
 
 $("csv-btn").onclick = () => {
-  if (SNAPSHOT) {
+  if (SNAPSHOT || historyData) {
     downloadCSVClient();
     return;
   }
@@ -1266,7 +1594,7 @@ function csvField(v) {
 function downloadCSVClient() {
   const lines = [["Image", "Namespace", "Controller", "CVE", "Severity", "Package",
     "Version", "Type", "PURL", "Location", "Fixed In", "Matcher", "Description", "Data Source"]];
-  for (const c of snapshotFilterCVEs(buildCVEsParams())) {
+  for (const c of snapshotFilterCVEs(buildCVEsParams(), historyData || SNAPSHOT)) {
     const insts = (c.images || []).filter((ref) => ref.image === c.image);
     lines.push([
       c.image,
@@ -1747,6 +2075,7 @@ async function poll() {
   loadNamespaces().catch(() => {});
   loadCVEs().catch(() => {});
   if (state.status && state.status.scanning) loadArtifacts().catch(() => {});
+  if (state.status && state.status.history === true) loadHistoryCount().catch(() => {});
 }
 
 if (SNAPSHOT) {

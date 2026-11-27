@@ -118,6 +118,7 @@ func runScanCmd(args []string) {
 		fromSBOM           = fs.String("from-sbom", envStr("FROM_SBOM", ""), "scan an SBOM file or all files of a directory (non-recursive) with grype only, skipping syft and image download")
 		vexPaths           = fs.StringArray("vex", nil, "path to a VEX document (OpenVEX or CSAF) or a directory of VEX documents (non-recursive); repeatable, all documents are combined")
 		dbRefresh          = fs.Duration("db-refresh-interval", envDuration("DB_REFRESH_INTERVAL", 24*time.Hour), "check for grype DB updates on this interval while running (0 disables)")
+		historyDir         = fs.String("history-dir", envStr("HISTORY_DIR", ""), "save a snapshot of every successful scan under this directory (day/time of the scan start; empty disables)")
 		platform           = fs.String("platform", envStr("PLATFORM", "linux/"+runtime.GOARCH), "image platform to scan (e.g. linux/amd64)")
 		scanTimeout        = fs.Duration("scan-timeout", envDuration("SCAN_TIMEOUT", 15*time.Minute), "per-image scan timeout")
 		exportHTML         = fs.String("export-html", envStr("EXPORT_HTML", ""), "run a scan, export the report as a single self-contained HTML file to this path, and exit")
@@ -398,10 +399,11 @@ func runScanCmd(args []string) {
 			defer dbMu.RUnlock()
 			return dbStatus
 		},
-		RefreshDB: refreshNow,
-		AccessLog: *accessLog,
-		VexDocs:   vexDocs,
-		Vex:       vex.New(),
+		RefreshDB:  refreshNow,
+		HistoryDir: *historyDir,
+		AccessLog:  *accessLog,
+		VexDocs:    vexDocs,
+		Vex:        vex.New(),
 	})
 
 	httpServer := &http.Server{
@@ -543,6 +545,8 @@ func runScanCmd(args []string) {
 			if err := sc.RunOnce(scanCtx, client); err != nil && err != context.Canceled {
 				logx.Errorf("scan run failed: %v", err)
 				store.SetDBError(err.Error())
+			} else if err == nil {
+				server.SaveHistory()
 			}
 		}()
 	}

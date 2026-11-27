@@ -89,8 +89,26 @@ internal/scanner/           syft (SBOM) + grype (CVE) como librerías; store en 
 internal/api/               API JSON + sirve la SPA
 web/index.html              SPA (vanilla JS, sin build)
 deploy/                     namespace, SA, ClusterRole(Binding), Deployment, Service
+chart/artifactor/           Helm chart (los mismos recursos que `artifactor install`)
 Dockerfile / Makefile       build de la imagen y automatización
 ```
+
+## Helm chart
+
+Un Helm chart que instala los mismos recursos que `artifactor install` vive en
+[`chart/artifactor/`](chart/artifactor/README.md): ServiceAccount,
+ClusterRole/ClusterRoleBinding, Deployment y Service, además de ServiceMonitor,
+PrometheusRule, SCC/RBAC de OpenShift, ConfigMap del CA del banco y
+imagePullSecret opcionales.
+
+```
+$ helm install artifactor ./chart/artifactor -n artifactor --create-namespace
+```
+
+Cada opción del deployment es un valor del chart (`image.tag`, `customerName`,
+`clusterName`, `scanInterval`, `concurrency`, `resources`, `dbCaCert`,
+`imagePullSecret`, `serviceMonitor.enabled`, `prometheusRule.enabled`,
+`openshift.enabled`, …) — consulta el README del chart para la lista completa.
 
 ## API
 
@@ -104,6 +122,8 @@ Dockerfile / Makefile       build de la imagen y automatización
 | GET | `/api/artifacts?image=&q=` | nombres distintos de artefactos (paquetes) encontrados por syft |
 | POST | `/api/scan` | lanza un reescaneo de todas las imágenes |
 | POST | `/api/db/update` | fuerza una actualización de la DB de grype en segundo plano (ignora la ventana de 2h; 409 si ya hay una en curso) |
+| GET | `/api/history` | escaneos guardados (más recientes primero) con cluster/contexto y conteos de CVEs por severidad y total; vacío cuando el historial está desactivado |
+| GET | `/api/history/{name}` | snapshot completo (scan.json) de un escaneo guardado |
 | GET | `/api/export` | descarga el informe como un **único HTML autocontenido** (datos embebidos; funciona sin conexión) |
 | GET | `/healthz` | liveness/readiness |
 

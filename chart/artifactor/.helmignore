@@ -1,0 +1,12 @@
+# Patterns to ignore when building packages.
+.git
+.gitignore
+*.tgz
+.helmignore
+# vim swap files
+.*.sw[a-p]
+# temporary files
+*.tmp
+*~
+# OS files
+.DS_Store

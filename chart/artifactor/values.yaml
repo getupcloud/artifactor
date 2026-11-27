@@ -1,0 +1,104 @@
+# Default values for artifactor.
+# This is a YAML-formatted file. Declared variables are documented here with
+# a -- comment.
+
+# Container image of the scanner.
+image:
+  repository: ghcr.io/getupcloud/artifactor
+  # tag follows the artifactor release version
+  tag: "0.7.0"
+  pullPolicy: IfNotPresent
+
+# -- Overrides the names generated from the chart/release name.
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Create the ServiceAccount used by the Deployment.
+  create: true
+  # -- Name of an existing ServiceAccount to use when create is false.
+  name: ""
+
+# -- Customer name, shown as [customer/cluster] in the logs and report title.
+customerName: ""
+# -- Cluster name, shown as [customer/cluster] in the logs and report title.
+clusterName: ""
+
+# -- Seconds between automatic rescans (0 = scan once at startup).
+scanInterval: 0
+# -- Number of images scanned in parallel.
+concurrency: 3
+# -- Keep the per-image SBOM bytes (only needed by SBOM exports).
+keepSbom: false
+# -- Log one line per HTTP request on the SPA/API and metrics servers.
+accessLog: true
+# -- Skip the EC2 IMDS fallback when no IRSA/web-identity credentials exist:
+# fail fast instead of timing out on the metadata service.
+awsEc2MetadataDisabled: true
+
+# -- Paths inside the pod (the emptyDir is mounted at /data).
+dbDir: /data/db
+historyDir: /data/history
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+# -- Pod-level security context (uid 65532 is the image user and the uid the
+# OpenShift SCC requires).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context.
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+probes:
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  liveness:
+    initialDelaySeconds: 30
+    periodSeconds: 30
+
+service:
+  type: ClusterIP
+
+# -- PEM CA certificate of the grype DB download server: when non-empty, the
+# chart creates the ConfigMap, mounts it into the pod and sets DB_CA_CERT.
+dbCaCert: ""
+
+imagePullSecret:
+  # -- Create the dockerconfigjson Secret and reference it in the Deployment
+  # (e.g. to pull ghcr.io/getupcloud/artifactor from a private registry).
+  create: false
+  # -- Contents of the .dockerconfigjson file (plain JSON; the chart
+  # base64-encodes it). Set it with e.g.
+  # --set-file imagePullSecret.dockerconfigjson=config.json
+  dockerconfigjson: ""
+
+openshift:
+  # -- Create the OpenShift/OKD SecurityContextConstraints + RBAC that let
+  # the service account run its pod (requires cluster-admin).
+  enabled: false
+
+serviceMonitor:
+  # -- Create the Prometheus Operator ServiceMonitor scraping the metrics
+  # port (requires the monitoring.coreos.com CRDs).
+  enabled: false
+  interval: 60s
+
+prometheusRule:
+  # -- Create the PrometheusRule with alerts on images with high/critical
+  # CVEs (requires the monitoring.coreos.com CRDs).
+  enabled: false

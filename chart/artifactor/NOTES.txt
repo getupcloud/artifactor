@@ -1,0 +1,19 @@
+artifactor {{ .Chart.AppVersion }} deployed in namespace {{ .Release.Namespace }}.
+
+Open the UI:
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "artifactor.fullname" . }} 8080:8080
+
+then browse http://127.0.0.1:8080/
+
+The scanner discovers the images running in the cluster at startup and every
+{{ .Values.scanInterval }} second(s) afterwards (0 = only once).
+{{- if .Values.serviceMonitor.enabled }}
+Prometheus scrapes the /metrics endpoint on port 9090 via the ServiceMonitor.
+{{- end }}
+{{- if .Values.prometheusRule.enabled }}
+Alerts on images with high/critical CVEs are installed via the PrometheusRule.
+{{- end }}
+{{- if .Values.openshift.enabled }}
+OpenShift SecurityContextConstraints + RBAC were applied (cluster-admin).
+{{- end }}

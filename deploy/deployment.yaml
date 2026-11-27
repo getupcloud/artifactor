@@ -38,6 +38,10 @@ spec:
           env:
             - name: DB_DIR
               value: /data/db
+            # save every successful scan under /data/history (survives
+            # container restarts; dies with the pod — emptyDir)
+            - name: HISTORY_DIR
+              value: /data/history
             # shown in the execution logs and report title (optional)
             - name: CUSTOMER_NAME
               value: ""

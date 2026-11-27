@@ -1,0 +1,20 @@
+apiVersion: v2
+name: artifactor
+description: >-
+  Scans every container image running in the Kubernetes cluster for CVEs,
+  using syft and grype as embedded Go libraries, and serves a filterable web
+  UI with Prometheus metrics.
+type: application
+# chart version (bump together with the artifactor release)
+version: 0.7.0
+appVersion: "0.7.0"
+keywords:
+  - cve
+  - security
+  - vulnerability
+  - scanner
+  - sbom
+  - kubernetes
+home: https://github.com/getupcloud/artifactor
+sources:
+  - https://github.com/getupcloud/artifactor

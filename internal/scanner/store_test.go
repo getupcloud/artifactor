@@ -22,14 +22,27 @@ func TestStoreDiscovering(t *testing.T) {
 
 func TestStoreTryStartScan(t *testing.T) {
 	s := NewStore()
+	if s.ScanStartedAt() != nil {
+		t.Fatal("ScanStartedAt set before any scan")
+	}
 	canceled := false
 	if !s.TryStartScan(func() { canceled = true }) {
 		t.Fatal("first TryStartScan rejected")
+	}
+	started := s.ScanStartedAt()
+	if started == nil {
+		t.Fatal("ScanStartedAt not recorded by TryStartScan")
+	}
+	if time.Since(*started) > time.Minute {
+		t.Errorf("ScanStartedAt not recent: %s", started)
 	}
 	if s.TryStartScan(func() { t.Error("second cancel must not be registered") }) {
 		t.Fatal("second TryStartScan accepted while scanning")
 	}
 	s.FinishScan()
+	if s.ScanStartedAt() == nil {
+		t.Fatal("ScanStartedAt cleared by FinishScan (the save runs after the run)")
+	}
 	if !s.TryStartScan(func() { canceled = true }) {
 		t.Fatal("TryStartScan rejected after FinishScan")
 	}

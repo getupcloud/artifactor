@@ -1,0 +1,37 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "artifactor.fullname" . }}-cves
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "artifactor.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: artifactor.cves
+      rules:
+        - alert: ArtifactorImageCriticalCVEs
+          expr: sum by (image, tag, namespace, kind, object, last_scan) (artifactor_image_cve{severity="critical"}) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: {{ `Critical CVE(s) in container image {{ $labels.image }}:{{ $labels.tag }}` }}
+            description: >-
+              {{ `Image {{ $labels.image }}:{{ $labels.tag }} running as
+              {{ $labels.kind }}/{{ $labels.object }} in namespace
+              {{ $labels.namespace }} has {{ $value }} critical CVE(s).
+              Last scan: {{ $labels.last_scan }}.` }}
+        - alert: ArtifactorImageHighCVEs
+          expr: sum by (image, tag, namespace, kind, object, last_scan) (artifactor_image_cve{severity="high"}) > 0
+          for: 5m
+          labels:
+            severity: high
+          annotations:
+            summary: {{ `High CVE(s) in container image {{ $labels.image }}:{{ $labels.tag }}` }}
+            description: >-
+              {{ `Image {{ $labels.image }}:{{ $labels.tag }} running as
+              {{ $labels.kind }}/{{ $labels.object }} in namespace
+              {{ $labels.namespace }} has {{ $value }} high CVE(s).
+              Last scan: {{ $labels.last_scan }}.` }}
+{{- end }}

@@ -144,16 +144,17 @@ func (r *Result) summary() Summary {
 
 // Store is a concurrency-safe in-memory collection of scan results.
 type Store struct {
-	mu           sync.RWMutex
-	results      map[string]*Result
-	images       []string
-	scanning     bool
-	discovering  bool               // true while a scan run is in its discovery phase
-	cancelling   bool               // true from the cancel request until the run finishes
-	scanCancel   context.CancelFunc // cancels the running scan (nil when idle)
-	lastScanDone *time.Time
-	dbError      string
-	stats        ScanStats
+	mu            sync.RWMutex
+	results       map[string]*Result
+	images        []string
+	scanning      bool
+	discovering   bool               // true while a scan run is in its discovery phase
+	cancelling    bool               // true from the cancel request until the run finishes
+	scanCancel    context.CancelFunc // cancels the running scan (nil when idle)
+	lastScanDone  *time.Time
+	scanStartedAt *time.Time // when the current (or last) scan run started
+	dbError       string
+	stats         ScanStats
 }
 
 func NewStore() *Store {
@@ -273,12 +274,26 @@ func (s *Store) TryStartScan(cancel context.CancelFunc) bool {
 	}
 	s.scanning = true
 	s.scanCancel = cancel
+	now := time.Now().UTC()
+	s.scanStartedAt = &now
 	for _, r := range s.results {
 		if r.Status == StatusCanceled {
 			r.Status = StatusQueued
 		}
 	}
 	return true
+}
+
+// ScanStartedAt returns when the current (or last) scan run started, nil
+// when no scan ever ran.
+func (s *Store) ScanStartedAt() *time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.scanStartedAt == nil {
+		return nil
+	}
+	t := *s.scanStartedAt
+	return &t
 }
 
 // CancelScan cancels the running scan, if any: the images that were being

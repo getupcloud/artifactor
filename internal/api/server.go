@@ -68,6 +68,9 @@ type Options struct {
 	// (POST /api/db/update). It returns an error when an update is already
 	// in progress. Nil disables the endpoint (exports and tests).
 	RefreshDB func() error
+	// HistoryDir enables scan history persistence: every successful scan
+	// run is saved under this directory ("" disables it).
+	HistoryDir string
 	// AccessLog logs one line per request (the SPA and API access log).
 	// Off by default so the package tests stay quiet; the real server
 	// enables it.
@@ -168,6 +171,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/scan", s.handleScan)
 	mux.HandleFunc("POST /api/scan/cancel", s.handleCancelScan)
 	mux.HandleFunc("POST /api/db/update", s.handleDBUpdate)
+	mux.HandleFunc("GET /api/history", s.handleHistoryList)
+	mux.HandleFunc("GET /api/history/{name...}", s.handleHistoryGet)
 	mux.HandleFunc("GET /api/vex", s.handleVexList)
 	mux.HandleFunc("POST /api/vex", s.handleAddVex)
 	mux.HandleFunc("DELETE /api/vex/{name}", s.handleRemoveVex)
@@ -281,6 +286,9 @@ func (s *Server) statusPayload() map[string]any {
 		"selectedCluster": selectedCluster,
 		"clusterError":    clusterError,
 		"db":              db,
+		// the SPA shows the History section only when history is enabled
+		// (--history-dir); false/absent = hidden
+		"history": s.opts.HistoryDir != "",
 	}
 }
 
@@ -1057,6 +1065,8 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		if err := s.opts.Scanner.RunOnce(scanCtx, client); err != nil && err != context.Canceled {
 			s.opts.Store.SetDBError(err.Error())
+		} else if err == nil {
+			s.SaveHistory()
 		}
 	}()
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "scan started"})

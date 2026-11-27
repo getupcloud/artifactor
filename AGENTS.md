@@ -288,8 +288,8 @@
   trailer `Co-Authored-By` no final (veja o git log).
 - NÃO sobrescrever a identidade git repo-local (Mateus Caruccio
   <mateus.caruccio@getupcloud.com>) nem o remote origin.
-- Não commitar artefatos locais não rastreados (`banco-senff-hml/`,
-  `db-ca.crt`, `bin/`, `dist/`, `export/`).
+- Não commitar artefatos locais não rastreados. Os arquivos rastreados
+  são definidos externamente, sempre pelo usuario.
 
 ## 9. Imagens Docker (conhecimento)
 

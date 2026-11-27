@@ -41,8 +41,8 @@ build: $(BIN) ## Compile the binary locally
 $(BIN): $(SOURCES)
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $@ .
 
-test: ## Run unit tests
-	go test ./... -count=1
+test: ## Run unit tests with the race detector (same as CI)
+	go test -race -count=1 ./...
 
 vet: ## Run go vet
 	go vet ./...

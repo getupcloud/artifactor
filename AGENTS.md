@@ -85,7 +85,7 @@
 - `.goreleaser.yaml`, `Makefile`, `Dockerfile` (imagem de produção),
   `Dockerfile.session` (container de sessão: `make build-session`),
   `SESSION.md` (bootstrap de sessão — aponta para este arquivo),
-  `.github/workflows/` (docker-build + release).
+  `.github/workflows/` (test + docker-build + release).
 
 ## 3. Decisões de arquitetura (resumo)
 
@@ -126,8 +126,8 @@
 ## 4. Build, teste e execução
 
 - `make build` = `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)"` (VERSION no Makefile — hoje 0.4.1).
-- `make test` = `go test ./... -count=1` (sempre `-count=1`: o cache do Go
-  pode repetir falhas velhas).
+- `make test` = `go test -race -count=1 ./...` (sempre `-count=1`: o cache do
+  Go pode repetir falhas velhas; `-race` iguala o local ao CI).
 - `make vet` — rodar também `go vet -tags integration ./...`.
 - `make docker-build` = `goreleaser release --clean --snapshot` (o Makefile
   exporta `IS_LATEST ?= false`; os templates do goreleaser FALHAM se a env
@@ -304,12 +304,14 @@
   `chown ${UID}:${GID} <workdir>` + `USER ${UID}:${GID}`, com
   `--build-arg UID=$(id -u) --build-arg GID=$(id -g)`. O container de sessão
   (`Dockerfile.session`) usa exatamente esse padrão.
-- CI: workflow docker-build a cada push no main (tags :main, :<sha>, :latest
-  — IS_LATEST="true"); workflow release manual (lê VERSION, falha se a tag
-  existir, publica :latest só para a versão mais nova); auth no ghcr.io
-  prefere o secret GHCR_PAT, fallback GITHUB_TOKEN. Os releases publicam
-  também os archives `artifactor_<os>_<arch>.tar.gz` (seção `archives` do
-  goreleaser) — são o que o self-update do CLI baixa.
+- CI: workflow test em todo pull request e push no main (gofmt, `go vet ./...`
+  e `go test -race -count=1 ./...`; os testes de integração ficam fora por
+  causa da tag `integration`); workflow docker-build a cada push no main
+  (tags :main, :<sha>, :latest — IS_LATEST="true"); workflow release manual
+  (lê VERSION, falha se a tag existir, publica :latest só para a versão mais
+  nova); auth no ghcr.io prefere o secret GHCR_PAT, fallback GITHUB_TOKEN.
+  Os releases publicam também os archives `artifactor_<os>_<arch>.tar.gz`
+  (seção `archives` do goreleaser) — são o que o self-update do CLI baixa.
 
 ## 10. Restrições e pegadinhas
 

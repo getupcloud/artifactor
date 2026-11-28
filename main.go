@@ -100,6 +100,7 @@ func runScanCmd(args []string) {
 		namespaceCSV       = fs.String("namespace", os.Getenv("NAMESPACE"), "only scan pods in these namespaces (comma-separated list; empty = all namespaces)")
 		labelSelector      = fs.String("label-selector", os.Getenv("LABEL_SELECTOR"), "only scan pods matching this Kubernetes label selector (empty = all pods)")
 		interval           = fs.Duration("scan-interval", envDuration("SCAN_INTERVAL", 0), "automatic rescan interval (0 disables)")
+		scanOnStart        = fs.Bool("scan-on-start", envBool("SCAN_ON_START", false), "run one scan as soon as the grype vulnerability database is ready (the --scan-interval ticker still applies)")
 		concurrency        = fs.Int("concurrency", envInt("CONCURRENCY", 3), "number of parallel image scans")
 		dbDir              = fs.String("db-dir", envStr("DB_DIR", defaultDBDir()), "grype vulnerability database directory")
 		dbUpdate           = fs.Bool("db-auto-update", envBool("DB_AUTO_UPDATE", true), "download/update the grype vulnerability DB on startup")
@@ -517,9 +518,10 @@ func runScanCmd(args []string) {
 		}
 	}()
 
-	// 4. Scan loop: scans only start on demand (the "Scan now" button posts
-	//    to /api/scan) or via an explicitly configured --scan-interval. Each
-	//    run targets the cluster currently selected in the registry.
+	// 4. Scan loop: scans start on demand (the "Scan now" button posts to
+	//    /api/scan), at startup with --scan-on-start, or via an explicitly
+	//    configured --scan-interval. Each run targets the cluster currently
+	//    selected in the registry.
 	runScan := func() {
 		if sc == nil {
 			return
@@ -557,6 +559,27 @@ func runScanCmd(args []string) {
 		tickerCh = ticker.C
 		defer ticker.Stop()
 	}
+
+	// 4b. --scan-on-start: run one scan as soon as the vulnerability DB
+	//     initialization finishes. Waiting for dbDone guarantees the scan
+	//     never starts without a DB; when the DB is unavailable the trigger
+	//     is skipped with a warning instead of recording a scan error.
+	if *scanOnStart {
+		go func() {
+			logx.Infof("startup scan enabled (--scan-on-start): waiting for the vulnerability database")
+			<-dbDone
+			run, warning := startupScanDecision(sc != nil, sc != nil && sc.Provider() != nil)
+			if !run {
+				if warning != "" {
+					logx.Warnf("%s", warning)
+				}
+				return
+			}
+			logx.Infof("starting the startup scan (--scan-on-start)")
+			runScan()
+		}()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -571,6 +594,20 @@ func runScanCmd(args []string) {
 			runScan()
 		}
 	}
+}
+
+// startupScanDecision reports whether the --scan-on-start trigger can run once
+// the vulnerability DB initialization has finished. Without a scanner (no
+// Kubernetes client and no SBOM input) or a vulnerability provider (DB
+// unavailable) the scan must be skipped; the returned warning is logged.
+func startupScanDecision(hasScanner, hasProvider bool) (bool, string) {
+	if !hasScanner {
+		return false, "startup scan skipped: no Kubernetes client available"
+	}
+	if !hasProvider {
+		return false, "startup scan skipped: vulnerability database unavailable"
+	}
+	return true, ""
 }
 
 // exportRequest holds the destinations of the --export* one-shot flags.

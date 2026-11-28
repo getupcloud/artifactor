@@ -106,9 +106,10 @@ $ helm install artifactor ./chart/artifactor -n artifactor --create-namespace
 ```
 
 Cada opción del deployment es un valor del chart (`image.tag`, `customerName`,
-`clusterName`, `scanInterval`, `concurrency`, `resources`, `dbCaCert`,
-`imagePullSecret`, `serviceMonitor.enabled`, `prometheusRule.enabled`,
-`openshift.enabled`, …) — consulta el README del chart para la lista completa.
+`clusterName`, `scanOnStart`, `scanInterval`, `concurrency`, `resources`,
+`dbCaCert`, `imagePullSecret`, `serviceMonitor.enabled`,
+`prometheusRule.enabled`, `openshift.enabled`, …) — consulta el README del
+chart para la lista completa.
 
 ## API
 
@@ -158,7 +159,8 @@ Artifactor acepta **documentos VEX** (**OpenVEX** o **CSAF**) que marcan CVEs co
 | `--access-log` | `ACCESS_LOG` | `false` | registra una línea por petición HTTP en los servidores SPA/API y de métricas (`GET /healthz` se omite); el deployment instalado se ejecuta con `ACCESS_LOG=true` |
 | `--namespace` | `NAMESPACE` | (todos) | restringe el escaneo a una **lista de namespaces separados por comas** (`--namespace a,b`); vacío = todos |
 | `--label-selector <sel>` | `LABEL_SELECTOR` | (todos) | restringe el descubrimiento a los pods que coinciden con este **label selector de Kubernetes** (p. ej. `app=web,tier in (frontend,api)`); vacío = todos los pods |
-| `--scan-interval` | `SCAN_INTERVAL` | `6h` | intervalo de reescaneo automático (`0` lo desactiva) |
+| `--scan-interval` | `SCAN_INTERVAL` | `0` | intervalo de reescaneo automático (`0` lo desactiva) |
+| `--scan-on-start` | `SCAN_ON_START` | `false` | ejecuta un escaneo en cuanto la DB de grype está lista, en lugar de esperar al botón "Scan now" (el deployment y el chart de Helm usan `SCAN_ON_START=true`; el ticker de `--scan-interval` sigue aplicando) |
 | `--concurrency` | `CONCURRENCY` | `3` | escaneos en paralelo |
 | `--db-dir` | `DB_DIR` | caché del usuario | directorio de la base de datos de vulnerabilidades de grype |
 | `--db-auto-update` | `DB_AUTO_UPDATE` | `true` | descarga/actualiza la DB de grype en el arranque |

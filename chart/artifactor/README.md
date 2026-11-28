@@ -30,7 +30,8 @@ kubectl port-forward -n artifactor svc/artifactor 8080:8080
 | `image.repository` / `image.tag` | `ghcr.io/getupcloud/artifactor` / chart `appVersion` | scanner container image |
 | `image.pullPolicy` | `IfNotPresent` | image pull policy |
 | `customerName` / `clusterName` | `""` | shown as `[customer/cluster]` in logs and report title |
-| `scanInterval` | `0` | seconds between automatic rescans (`0` = scan once at startup) |
+| `scanOnStart` | `true` | runs one scan as soon as the grype DB is ready at startup (the `scanInterval` ticker still applies) |
+| `scanInterval` | `0` | seconds between automatic rescans (`0` = no periodic rescans) |
 | `concurrency` | `3` | images scanned in parallel |
 | `dbDir` / `historyDir` | `/data/db` / `/data/history` | paths inside the pod (emptyDir `/data`) |
 | `resources` | requests `100m`/`256Mi`, limits `2`/`4Gi` | container resources |

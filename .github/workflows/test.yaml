@@ -3,8 +3,8 @@ name: test
 # Runs the checks that keep main green — formatting (gofmt), go vet and the
 # unit tests with the race detector — on every pull request and on every push
 # to main, so a change that breaks a test or the formatting cannot be merged
-# unnoticed. The commands match the local ones in the Makefile (make vet,
-# make test).
+# unnoticed. The vet and test steps call the Makefile targets, so CI and a
+# local `make vet test` always run the same commands.
 on:
   pull_request:
   push:
@@ -38,7 +38,7 @@ jobs:
           fi
 
       - name: vet
-        run: go vet ./...
+        run: make vet
 
       - name: test
-        run: go test -race -count=1 ./...
+        run: make test

@@ -1,7 +1,10 @@
 package metrics
 
 import (
+	"fmt"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -136,6 +139,108 @@ artifactor_image_cve{cve="CVE-2026-2222",image="registry.exemplo.com:5000/app/ap
 `
 	if got := rr.Body.String(); got != want {
 		t.Errorf("metrics output mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestRenderDeduplicatesCVEs(t *testing.T) {
+	scannedAt := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
+	instances := []k8s.Instance{
+		{Namespace: "prod", Controller: "deployment/api"},
+		{Namespace: "staging", Controller: "deployment/api"},
+	}
+	line := func(namespace, id, severity string) string {
+		return fmt.Sprintf(`artifactor_image_cve{cve=%q,image="registry.exemplo.com:5000/app/api",kind="deployment",last_scan="2026-11-18T10:00:00Z",namespace=%q,object="api",severity=%q,tag="v1.2.3"} 1`, id, namespace, severity)
+	}
+	tests := []struct {
+		name string
+		cves []scanner.CVE
+		want []string
+	}{
+		{
+			name: "same CVE in two packages renders one line per instance",
+			cves: []scanner.CVE{
+				{ID: "CVE-2026-1111", Severity: "high", PackageName: "openssl", PackageVersion: "3.0.1"},
+				{ID: "CVE-2026-1111", Severity: "high", PackageName: "openssl-libs", PackageVersion: "3.0.1"},
+			},
+			want: []string{
+				line("prod", "CVE-2026-1111", "high"),
+				line("staging", "CVE-2026-1111", "high"),
+			},
+		},
+		{
+			name: "highest severity wins when the matches disagree",
+			cves: []scanner.CVE{
+				{ID: "CVE-2026-2222", Severity: "low", PackageName: "a"},
+				{ID: "CVE-2026-2222", Severity: "critical", PackageName: "b"},
+				{ID: "CVE-2026-2222", Severity: "medium", PackageName: "c"},
+			},
+			want: []string{
+				line("prod", "CVE-2026-2222", "critical"),
+				line("staging", "CVE-2026-2222", "critical"),
+			},
+		},
+		{
+			name: "unknown severity ranks below a known one",
+			cves: []scanner.CVE{
+				{ID: "CVE-2026-3333", Severity: "unknown", PackageName: "a"},
+				{ID: "CVE-2026-3333", Severity: "negligible", PackageName: "b"},
+			},
+			want: []string{
+				line("prod", "CVE-2026-3333", "negligible"),
+				line("staging", "CVE-2026-3333", "negligible"),
+			},
+		},
+		{
+			name: "distinct CVEs keep one line each",
+			cves: []scanner.CVE{
+				{ID: "CVE-2026-1111", Severity: "high", PackageName: "a"},
+				{ID: "CVE-2026-1111", Severity: "high", PackageName: "b"},
+				{ID: "CVE-2026-2222", Severity: "critical", PackageName: "a"},
+				{ID: "CVE-2026-3333", Severity: "medium", PackageName: "b"},
+			},
+			want: []string{
+				line("prod", "CVE-2026-1111", "high"),
+				line("prod", "CVE-2026-2222", "critical"),
+				line("prod", "CVE-2026-3333", "medium"),
+				line("staging", "CVE-2026-1111", "high"),
+				line("staging", "CVE-2026-2222", "critical"),
+				line("staging", "CVE-2026-3333", "medium"),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := scanner.NewStore()
+			store.SetImages([]string{"registry.exemplo.com:5000/app/api:v1.2.3"})
+			store.Put(scanner.Result{
+				Image:     "registry.exemplo.com:5000/app/api:v1.2.3",
+				Status:    scanner.StatusScanned,
+				ScannedAt: &scannedAt,
+				Instances: instances,
+				Cves:      tt.cves,
+			})
+			rr := httptest.NewRecorder()
+			New(store).ServeHTTP(rr, httptest.NewRequest("GET", "/metrics", nil))
+
+			var got []string
+			seen := map[string]bool{}
+			for _, l := range strings.Split(rr.Body.String(), "\n") {
+				if !strings.HasPrefix(l, "artifactor_image_cve{") {
+					continue
+				}
+				if seen[l] {
+					t.Errorf("duplicate series: %s", l)
+				}
+				seen[l] = true
+				got = append(got, l)
+			}
+			want := append([]string(nil), tt.want...)
+			sort.Strings(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("artifactor_image_cve lines mismatch:\n--- got ---\n%s\n--- want ---\n%s",
+					strings.Join(got, "\n"), strings.Join(want, "\n"))
+			}
+		})
 	}
 }
 

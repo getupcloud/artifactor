@@ -174,7 +174,10 @@
   e remove. Arquivos enviados ficam só em memória (+ temp file).
 - Discovery/scan: `--namespace a,b`, `--label-selector <sel>` (filtra os
   pods do discovery por label selector do Kubernetes; vazio = todos),
-  `--scan-interval`, `--concurrency`,
+  `--scan-interval`, `--scan-on-start` (dispara um scan assim que o banco
+  grype fica pronto; default `false` no CLI e `true` no deployment/chart —
+  sem banco disponível o trigger é pulado com warning, sem erro de scan),
+  `--concurrency`,
   `--scan-timeout`, `--platform`, `--keep-sbom`, `--ecr-auth`, `--gcp-auth`
   (GKE Workload Identity), `--azure-auth` (Entra Workload ID),
   `--insecure-skip-tls` (registries, refresh do names.json e downloads

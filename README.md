@@ -106,9 +106,10 @@ $ helm install artifactor ./chart/artifactor -n artifactor --create-namespace
 ```
 
 Every deployment knob is a chart value (`image.tag`, `customerName`,
-`clusterName`, `scanInterval`, `concurrency`, `resources`, `dbCaCert`,
-`imagePullSecret`, `serviceMonitor.enabled`, `prometheusRule.enabled`,
-`openshift.enabled`, …) — see the chart README for the full list.
+`clusterName`, `scanOnStart`, `scanInterval`, `concurrency`, `resources`,
+`dbCaCert`, `imagePullSecret`, `serviceMonitor.enabled`,
+`prometheusRule.enabled`, `openshift.enabled`, …) — see the chart README
+for the full list.
 
 ## API
 
@@ -158,7 +159,8 @@ Artifactor accepts **VEX documents** (**OpenVEX** or **CSAF**) that mark CVEs as
 | `--access-log` | `ACCESS_LOG` | `false` | logs one line per HTTP request on the SPA/API and metrics servers (`GET /healthz` is skipped); the installed deployment runs with `ACCESS_LOG=true` |
 | `--namespace` | `NAMESPACE` | (all) | restricts the scan to a **comma-separated namespace list** (`--namespace a,b`); empty = all |
 | `--label-selector <sel>` | `LABEL_SELECTOR` | (all) | restricts the discovery to the pods matching this **Kubernetes label selector** (e.g. `app=web,tier in (frontend,api)`); empty = all pods |
-| `--scan-interval` | `SCAN_INTERVAL` | `6h` | automatic rescan interval (`0` disables) |
+| `--scan-interval` | `SCAN_INTERVAL` | `0` | automatic rescan interval (`0` disables) |
+| `--scan-on-start` | `SCAN_ON_START` | `false` | runs one scan as soon as the grype DB is ready, instead of waiting for the "Scan now" button (the deployment and the Helm chart set `SCAN_ON_START=true`; the `--scan-interval` ticker still applies) |
 | `--concurrency` | `CONCURRENCY` | `3` | parallel scans |
 | `--db-dir` | `DB_DIR` | user cache | grype vulnerability database directory |
 | `--db-auto-update` | `DB_AUTO_UPDATE` | `true` | downloads/updates the grype DB at startup |

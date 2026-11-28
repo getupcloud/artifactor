@@ -47,6 +47,10 @@ spec:
               value: ""
             - name: CLUSTER_NAME
               value: ""
+            # run one scan as soon as the DB is ready (the pod has no one
+            # clicking "Scan now" right after the install)
+            - name: SCAN_ON_START
+              value: "true"
             - name: SCAN_INTERVAL
               value: "0"
             - name: CONCURRENCY

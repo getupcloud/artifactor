@@ -43,6 +43,10 @@ spec:
               value: {{ .Values.customerName | quote }}
             - name: CLUSTER_NAME
               value: {{ .Values.clusterName | quote }}
+            # run one scan as soon as the DB is ready (nobody clicks
+            # "Scan now" right after the install)
+            - name: SCAN_ON_START
+              value: {{ .Values.scanOnStart | quote }}
             - name: SCAN_INTERVAL
               value: {{ .Values.scanInterval | quote }}
             - name: CONCURRENCY

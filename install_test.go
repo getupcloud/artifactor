@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -39,6 +40,18 @@ func TestRenderManifests(t *testing.T) {
 	// the namespace must be the first manifest
 	if strings.Index(text, "kind: Namespace") != strings.Index(text, "kind: ") {
 		t.Error("namespace manifest must be rendered first")
+	}
+}
+
+func TestRenderManifestsScanOnStart(t *testing.T) {
+	data, err := renderManifests("", "", "artifactor", "", "", false, false, "", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the installed deployment scans once at startup once the DB is ready
+	re := regexp.MustCompile(`(?m)^\s*- name: SCAN_ON_START\n\s*value: "true"$`)
+	if !re.Match(data) {
+		t.Error("deployment manifest must set SCAN_ON_START=true")
 	}
 }
 

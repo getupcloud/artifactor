@@ -24,7 +24,10 @@ customerName: ""
 # -- Cluster name, shown as [customer/cluster] in the logs and report title.
 clusterName: ""
 
-# -- Seconds between automatic rescans (0 = scan once at startup).
+# -- Run one scan as soon as the grype vulnerability DB is ready at startup
+# (the scanInterval ticker still applies).
+scanOnStart: true
+# -- Seconds between automatic rescans (0 = no periodic rescans).
 scanInterval: 0
 # -- Number of images scanned in parallel.
 concurrency: 3

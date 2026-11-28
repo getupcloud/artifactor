@@ -6,8 +6,8 @@ Open the UI:
 
 then browse http://127.0.0.1:8080/
 
-The scanner discovers the images running in the cluster at startup and every
-{{ .Values.scanInterval }} second(s) afterwards (0 = only once).
+The scanner {{ if .Values.scanOnStart }}runs one scan as soon as the vulnerability database is ready at startup.{{ else }}does not scan at startup (scanOnStart=false).{{ end }}
+{{ if gt (int .Values.scanInterval) 0 }}It also rescans every {{ .Values.scanInterval }} second(s).{{ else }}Use the "Scan now" button in the UI to trigger a scan on demand.{{ end }}
 {{- if .Values.serviceMonitor.enabled }}
 Prometheus scrapes the /metrics endpoint on port 9090 via the ServiceMonitor.
 {{- end }}

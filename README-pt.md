@@ -136,7 +136,7 @@ Métricas (formato text exposition, sem dependências externas):
 | Métrica | Descrição |
 |---|---|
 | `artifactor_image_status{image,tag,status,namespace,kind,object,last_scan}` | uma série por imagem **por instância de workload**: status `queued`/`scanning`/`scanned`/`error`, a imagem sem tag/digest, o workload (namespace, tipo e nome do objeto) e o último scan com sucesso (RFC3339 UTC) |
-| `artifactor_image_cve{image,tag,cve,severity,namespace,kind,object,last_scan}` | uma série por CVE **por instância de workload**: CVE + criticidade (`critical`/`high`/`medium`/`low`/`negligible`/`unknown`) |
+| `artifactor_image_cve{image,tag,cve,severity,namespace,kind,object,last_scan}` | uma série por CVE **por instância de workload** (deduplicada quando a mesma CVE atinge vários pacotes da imagem; vale a maior criticidade): CVE + criticidade (`critical`/`high`/`medium`/`low`/`negligible`/`unknown`) |
 
 Para integrar com o Prometheus Operator, `artifactor install --service-monitor` aplica, além do ServiceMonitor (scrape da porta `metrics` a cada 60s), uma PrometheusRule com alertas de CVE:
 

@@ -62,7 +62,9 @@
   image/tag/status ou cve/severity + namespace/kind/object do workload —
   `kind/nome` vem do `Controller` da descoberta; imagens sem workload
   ficam com os três vazios — e last_scan), renderizadas do Store a cada
-  scrape.
+  scrape. As CVEs são deduplicadas por imagem (uma série por CVE, não por
+  pacote; quando os matches discordam, vale a maior criticidade), senão o
+  Prometheus rejeitaria séries duplicadas.
 - `internal/registryauth/` — parsing de docker config, extração de authority.
 - `internal/ecr/` — cadeia de credenciais AWS (IRSA) para ECR.
 - `internal/gcp/` — token do metadata server do GKE (Workload Identity) para
